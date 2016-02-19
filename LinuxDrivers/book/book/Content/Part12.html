@@ -1,0 +1,544 @@
+<!DOCTYPE HTML>
+<html lang="en" >
+    
+    <head>
+        
+        <meta charset="UTF-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <title>USB Drivers in Linux Continued | Introduction</title>
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="generator" content="GitBook 2.6.6">
+        
+        
+        <meta name="HandheldFriendly" content="true"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black">
+        <link rel="apple-touch-icon-precomposed" sizes="152x152" href="../gitbook/images/apple-touch-icon-precomposed-152.png">
+        <link rel="shortcut icon" href="../gitbook/images/favicon.ico" type="image/x-icon">
+        
+    <link rel="stylesheet" href="../gitbook/style.css">
+    
+        
+        <link rel="stylesheet" href="../gitbook/plugins/gitbook-plugin-highlight/website.css">
+        
+    
+        
+        <link rel="stylesheet" href="../gitbook/plugins/gitbook-plugin-search/search.css">
+        
+    
+        
+        <link rel="stylesheet" href="../gitbook/plugins/gitbook-plugin-fontsettings/website.css">
+        
+    
+    
+
+        
+    
+    
+    <link rel="next" href="../Content/Part13.html" />
+    
+    
+    <link rel="prev" href="../Content/Part11.html" />
+    
+
+        
+    </head>
+    <body>
+        
+        
+    <div class="book"
+        data-level="13"
+        data-chapter-title="USB Drivers in Linux Continued"
+        data-filepath="Content/Part12.md"
+        data-basepath=".."
+        data-revision="Mon Feb 01 2016 13:21:33 GMT+0530 (IST)"
+        data-innerlanguage="">
+    
+
+<div class="book-summary">
+    <nav role="navigation">
+        <ul class="summary">
+            
+            
+            
+            
+
+            
+
+            
+    
+        <li class="chapter " data-level="0" data-path="index.html">
+            
+                
+                    <a href="../index.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                        Introduction
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="1" data-path="Preface/index.html">
+            
+                
+                    <a href="../Preface/index.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>1.</b>
+                        
+                        Preface
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="2" data-path="Content/Part01.html">
+            
+                
+                    <a href="../Content/Part01.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>2.</b>
+                        
+                        Linux Device Drivers for Your Girl Friend
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="3" data-path="Content/Part02.html">
+            
+                
+                    <a href="../Content/Part02.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>3.</b>
+                        
+                        Writing Your First Linux Driver in the Classroom
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="4" data-path="Content/Part03.html">
+            
+                
+                    <a href="../Content/Part03.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>4.</b>
+                        
+                        Kernel C Extras in a Linux Driver
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="5" data-path="Content/Part04.html">
+            
+                
+                    <a href="../Content/Part04.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>5.</b>
+                        
+                        Linux Character Drivers
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="6" data-path="Content/Part05.html">
+            
+                
+                    <a href="../Content/Part05.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>6.</b>
+                        
+                        Character Device Files - Creation &amp; Operations
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="7" data-path="Content/Part06.html">
+            
+                
+                    <a href="../Content/Part06.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>7.</b>
+                        
+                        Decoding Character Device File Operations
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="8" data-path="Content/Part07.html">
+            
+                
+                    <a href="../Content/Part07.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>8.</b>
+                        
+                        Generic Hardware Access in Linux
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="9" data-path="Content/Part08.html">
+            
+                
+                    <a href="../Content/Part08.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>9.</b>
+                        
+                        Accessing x86-Specific I/O-Mapped Hardware
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="10" data-path="Content/Part09.html">
+            
+                
+                    <a href="../Content/Part09.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>10.</b>
+                        
+                        I/O Control in Linux
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="11" data-path="Content/Part10.html">
+            
+                
+                    <a href="../Content/Part10.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>11.</b>
+                        
+                        Kernel-Space Debuggers in Linux
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="12" data-path="Content/Part11.html">
+            
+                
+                    <a href="../Content/Part11.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>12.</b>
+                        
+                        USB Drivers in Linux
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter active" data-level="13" data-path="Content/Part12.html">
+            
+                
+                    <a href="../Content/Part12.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>13.</b>
+                        
+                        USB Drivers in Linux Continued
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="14" data-path="Content/Part13.html">
+            
+                
+                    <a href="../Content/Part13.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>14.</b>
+                        
+                        Data Transfer to and from USB Devices
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="15" data-path="Content/Part14.html">
+            
+                
+                    <a href="../Content/Part14.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>15.</b>
+                        
+                        A Dive Inside the Hard Disk for Understanding Partitions
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="16" data-path="Content/Part15.html">
+            
+                
+                    <a href="../Content/Part15.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>16.</b>
+                        
+                        Disk on RAM: Playing with Block Drivers
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="17" data-path="Content/Part16.html">
+            
+                
+                    <a href="../Content/Part16.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>17.</b>
+                        
+                        Kernel Window - Peeping through /proc
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="18" data-path="Content/Part17.html">
+            
+                
+                    <a href="../Content/Part17.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>18.</b>
+                        
+                        Module Interactions
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="19" data-path="Content/Part18.html">
+            
+                
+                    <a href="../Content/Part18.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>19.</b>
+                        
+                        File Systems - A Semester Project
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="20" data-path="Content/Part19.html">
+            
+                
+                    <a href="../Content/Part19.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>20.</b>
+                        
+                        File Systems: A Semester Project - II
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="21" data-path="Content/Part20.html">
+            
+                
+                    <a href="../Content/Part20.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>21.</b>
+                        
+                        The Semester Project: File Systems - III
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="22" data-path="Content/Part21.html">
+            
+                
+                    <a href="../Content/Part21.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>22.</b>
+                        
+                        The Semester Project - IV: FS Formatting a Pen Drive
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="23" data-path="Content/Part22.html">
+            
+                
+                    <a href="../Content/Part22.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>23.</b>
+                        
+                        The Semester Project - V: The File System Module Template
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="24" data-path="Content/Part23.html">
+            
+                
+                    <a href="../Content/Part23.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>24.</b>
+                        
+                        The Semester Project - VI: File System on Block Device
+                    </a>
+            
+            
+        </li>
+    
+        <li class="chapter " data-level="25" data-path="Content/Part24.html">
+            
+                
+                    <a href="../Content/Part24.html">
+                
+                        <i class="fa fa-check"></i>
+                        
+                            <b>25.</b>
+                        
+                        The Semester Project - VII: The File System in Action
+                    </a>
+            
+            
+        </li>
+    
+
+
+            
+            <li class="divider"></li>
+            <li>
+                <a href="https://www.gitbook.com" target="blank" class="gitbook-link">
+                    Published with GitBook
+                </a>
+            </li>
+            
+        </ul>
+    </nav>
+</div>
+
+    <div class="book-body">
+        <div class="body-inner">
+            <div class="book-header" role="navigation">
+    <!-- Actions Left -->
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href="../" >Introduction</a>
+    </h1>
+</div>
+
+            <div class="page-wrapper" tabindex="-1" role="main">
+                <div class="page-inner">
+                
+                
+                    <section class="normal" id="section-">
+                    
+                        
+                    
+                    </section>
+                
+                
+                </div>
+            </div>
+        </div>
+
+        
+        <a href="../Content/Part11.html" class="navigation navigation-prev " aria-label="Previous page: USB Drivers in Linux"><i class="fa fa-angle-left"></i></a>
+        
+        
+        <a href="../Content/Part13.html" class="navigation navigation-next " aria-label="Next page: Data Transfer to and from USB Devices"><i class="fa fa-angle-right"></i></a>
+        
+    </div>
+</div>
+
+        
+<script src="../gitbook/app.js"></script>
+
+    
+    <script src="../gitbook/plugins/gitbook-plugin-search/lunr.min.js"></script>
+    
+
+    
+    <script src="../gitbook/plugins/gitbook-plugin-search/search.js"></script>
+    
+
+    
+    <script src="../gitbook/plugins/gitbook-plugin-sharing/buttons.js"></script>
+    
+
+    
+    <script src="../gitbook/plugins/gitbook-plugin-fontsettings/buttons.js"></script>
+    
+
+    
+    <script src="../gitbook/plugins/gitbook-plugin-livereload/plugin.js"></script>
+    
+
+<script>
+require(["gitbook"], function(gitbook) {
+    var config = {"highlight":{},"search":{"maxIndexSize":1000000},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2},"livereload":{}};
+    gitbook.start(config);
+});
+</script>
+
+        
+    </body>
+    
+</html>
