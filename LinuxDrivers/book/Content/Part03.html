@@ -53,7 +53,7 @@
         data-chapter-title="Kernel C Extras in a Linux Driver"
         data-filepath="Content/Part03.md"
         data-basepath=".."
-        data-revision="Sun Feb 21 2016 08:09:04 GMT+0530 (IST)"
+        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,40 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="kernel-c-extras-in-a-linux-driver">Kernel C Extras in a Linux Driver</h1>
+<blockquote>
+<p>This third article, in the series on Linux device drivers deals with the kernel&#x2019;s message logging,
+and kernel-specific GCC extensions.</p>
+</blockquote>
+<p>Enthused by how Pugs impressed professor Gopi, in the last class, Shweta decided to do something similar. And there was already an opportunity &#x2013; finding out where has the output of printk gone. So, as soon as she entered the lab, she got hold of the best located system, logged into it, and took charge. Knowing her professor pretty well, she knew that there would be a hint for the finding, from the class itself. So, she flashed back what all the professor taught, and suddenly remembered the error output demonstration from <code>insmod vfat.ko</code> &#x2013; <code>dmesg | tail</code>. She immediately tried that and for sure found out the printk output, there. But how did it come here? A tap on her shoulder brought her out of the thought. &quot;Shall we go for a coffee?&quot;, proposed Pugs. &quot;But I need to &#x2026;&quot;. &quot;I know what you are thinking about.&quot;, interrupted Pugs. &quot;Let&apos;s go, yaar. I&#x2019;ll explain you all about <code>dmesg</code>&quot;.</p>
+<h2 id="kernel-message-logging">Kernel Message Logging</h2>
+<p>On the coffee table, Pugs began:
+As far as parameters are concerned, printf &amp; printk are same, except that when programming for the kernel we don&#x2019;t bother about the float formats of %f, %lf &amp; their likes. However unlike printf, printk is not destined to dump its output on some console. In fact, it cannot do so, as it is something which is in the background, and executes like a library, only when triggered either from the hardware space or the user space. So, then where does <code>printk</code> print? All the <code>printk</code> calls, just put their contents into the (log) ring buffer of the kernel. Then, the syslog daemon running in the user space picks them for final processing &amp; redirection to various devices, as configured in its configuration file <code>/etc/syslog.conf</code>.</p>
+<p>You must have observed the out of place macro KERN_INFO, in the printk calls, in the previous article. That actually is a constant string, which gets concatenated with the format string after it, making it a single string. Note that there is no comma (,) between them &#x2013; they are no two separate arguments. There are eight such macros defined in <code>&lt;linux/kernel.h&gt;</code> under the kernel source, namely:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> KERN_EMERG    <span class="hljs-string">&quot;&lt;0&gt;&quot;</span> <span class="hljs-comment">/* system is unusable            */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> KERN_ALERT    <span class="hljs-string">&quot;&lt;1&gt;&quot;</span> <span class="hljs-comment">/* action must be taken immediately    */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> KERN_CRIT    <span class="hljs-string">&quot;&lt;2&gt;&quot;</span> <span class="hljs-comment">/* critical conditions            */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> KERN_ERR    <span class="hljs-string">&quot;&lt;3&gt;&quot;</span> <span class="hljs-comment">/* error conditions            */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> KERN_WARNING    <span class="hljs-string">&quot;&lt;4&gt;&quot;</span> <span class="hljs-comment">/* warning conditions            */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> KERN_NOTICE    <span class="hljs-string">&quot;&lt;5&gt;&quot;</span> <span class="hljs-comment">/* normal but significant condition    */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> KERN_INFO    <span class="hljs-string">&quot;&lt;6&gt;&quot;</span> <span class="hljs-comment">/* informational                */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> KERN_DEBUG    <span class="hljs-string">&quot;&lt;7&gt;&quot;</span> <span class="hljs-comment">/* debug-level messages            */</span></span>
+</code></pre>
+<p>Depending on these log levels (i.e. the first 3 characters in the format string), the syslog daemon in the user space redirects the corresponding messages to their configured locations &#x2013; a typical one being the log file <code>/var/log/messages</code> for all the log levels. Hence, all the <code>printk</code> outputs are by default in that file. Though, they can be configured differently to say serial port <code>(/dev/ttyS0)</code> or say all consoles, like what happens typically for <code>KERN_EMERG</code>. Now, <code>/var/log/messages</code> is buffered &amp; contain messages not only from the kernel but also from various daemons running in the user space. Moreover, the <code>/var/log/messages</code> most often is not readable by a normal user, and hence a user-space utility <code>dmesg</code> is provided to directly parse the kernel ring buffer and dump it on the standard output. Figure 6 shows the snippets from the two.</p>
+<p><img src="../Images/Part3/figure_6_kernels_message_logging.png" alt="Figure 6"></p>
+<h2 id="kernelspecific-gcc-extensions">Kernel-specific GCC extensions</h2>
+<p>With all these Shweta got frustrated, as she wanted to find all these by her own, and then do a impression in the next class &#x2013; but all flop. Pissed off, she said, &#x201C;So as you have explained all about printing in kernel, why don&#x2019;t you tell about the weird C in the driver as well &#x2013; the special keywords <code>__init</code>, <code>__exit</code>, etc.&#x201D;</p>
+<p>These are not any special keywords. Kernel C is not any weird C but just the standard C with some additional extensions from the C compiler <code>gcc</code>. Macros <code>__init</code> and <code>__exit</code> are just two of these extensions. However, these do not have any relevance in case we are using them for dynamically loadable driver, but only when the same code gets built into the kernel. All the functions marked with <code>__init</code> get placed inside the init section of the kernel image and all functions marked with <code>__exit</code> are placed inside the exit section of the kernel image, automatically by gcc, during kernel compilation. What is the benefit? All functions with <code>__init</code> are supposed to be executed only once during boot-up, till the next boot-up. So, once they are executed during boot-up, kernel frees up RAM by removing them by freeing up the init section. Similarly, all functions in exit section are supposed to be called during system shutdown. Now, if system is shutting down anyway, why do you need to do any cleanups. Hence, the exit section is not even built into the kernel &#x2013; another cool optimization.</p>
+<p>This is a beautiful example of how kernel &amp; gcc goes hand-in-hand to achieve lot of optimizations and many other tricks &#x2013; we could see others, as we go along. And that is why Linux kernel can be compiled only using gcc-based compilers &#x2013; a close knit bond.</p>
+<h2 id="kernel-functions-return-guidelines">Kernel function&#x2019;s return guidelines</h2>
+<p>While returning from coffee, Pugs started all praises for the OSS &amp; its community. Do you know why different individuals are able to come together and contribute excellently without any conflicts &#x2013; moreover in a project as huge as Linux? There are many reasons. But definitely, one of the strong reasons is, following &amp; abiding by the inherent coding guidelines. Take for example the guideline for returning values from a function in kernel programming.</p>
+<p>Any kernel function needing error handling, typically returns an integer-like type and the return value again follows a guideline. For an error, we return a negative number &#x2013; a minus sign appended with a macro included through the kernel header <code>&lt;linux/errno.h&gt;</code>, that includes the various error number headers under the kernel sources, namely <code>&lt;asm/errno.h&gt;</code>, <code>&lt;asm-generic/errno.h&gt;</code>, <code>&lt;asm-generic/errno-base.h&gt;</code>. For success, zero is the most common return value, unless there is some additional information to be provided. In that case, a positive value is returned, the value indicating the information like number of bytes transferred.</p>
+<h2 id="kernel-c--pure-c">Kernel C = Pure C</h2>
+<p>Once back into the lab, Shweta remembered their professor mentioning that no /usr/include headers can be used for kernel programming. But Pugs said that kernel C is just standard C with some gcc extensions. Why this conflict? Actually this is not a conflict. Standard C is just pure C &#x2013; just the language. The headers are not part of it. Those are part of the standard libraries built in C for C programmers, based on the concept of re-using code. Does that mean, all standard libraries and hence all ANSI standard functions are not part of &#x2018;pure&#x2019; C? Yes. Then, hadn&#x2019;t it been really tough coding the kernel. Not for this reason. In reality, kernel developers have developed their own needed set of functions, and they are all part of the kernel code. printk is just one of them. Similarly, many string functions, memory functions, &#x2026; are all part of the kernel source under various directories like kernel, ipc, lib, &#x2026; and the corresponding headers under include/linux directory.</p>
+<p>&#x201C;O ya! That is why we need to have kernel source for building a driver&#x201D;, affirmed Shweta. &#x201C;If not the complete source, at least the headers are a must. And that is why we have separate packages to install complete kernel source or just the kernel headers&#x201D;, added Pugs. &#x201C;In the lab, all the sources are setup. But if I want to try out drivers on my Linux system at my hostel room, how do I go about it?&#x201D; asked Shweta. &#x201C;Our lab have Fedora, where the kernel sources typically get installed under <code>/usr/src/kernels/&lt;kernel_version&gt;</code> unlike the standard place <code>/usr/src/linux</code>. Lab administrators must have installed it using command line <code>yum install kernel-devel</code>. I use Mandriva and installed the kernel sources using <code>urpmi kernel-source</code>, replied Pugs. <code>but, I have Ubuntu</code>. &quot;Okay!! For that just use <code>apt-get install</code> &#x2013; possibly, <code>apt-get install linux-source</code>&quot;.</p>
+<h2 id="summing-up">Summing up</h2>
+<p>Lab timings were just getting over. Suddenly, Shweta put out her curiosity &#x2013; &quot;Hey Pugs! What is the next topic we are going to learn in our Linux device drivers class?&quot;. &quot;Hmmm!! Most probably character drivers&quot;. With this information, Shweta hurriedly packed up her bag &amp; headed towards her room to setup the kernel sources and try out the next driver on her own. &quot;In case you are stuck up, just give me a call. I&#x2019;ll be there&quot;, called up Pugs from the behind with a smile.</p>
+
                     
                     </section>
                 
@@ -512,13 +545,9 @@
     <script src="../gitbook/plugins/gitbook-plugin-fontsettings/buttons.js"></script>
     
 
-    
-    <script src="../gitbook/plugins/gitbook-plugin-livereload/plugin.js"></script>
-    
-
 <script>
 require(["gitbook"], function(gitbook) {
-    var config = {"highlight":{},"search":{"maxIndexSize":1000000},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2},"livereload":{}};
+    var config = {"highlight":{},"search":{"maxIndexSize":1000000},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2}};
     gitbook.start(config);
 });
 </script>
