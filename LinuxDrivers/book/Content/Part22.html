@@ -53,7 +53,7 @@
         data-chapter-title="The Semester Project - V: The File System Module Template"
         data-filepath="Content/Part22.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,161 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="the-semester-project-&#x2013;-part-v-file-system-module-template">The Semester Project &#x2013; Part V: File System Module Template</h1>
+<blockquote>
+<p>This twenty-second article, which is part of the series on Linux device drivers, lays out a bare bone file system module.</p>
+</blockquote>
+<p>With the formatting of the pen drive, the file system is all set in the hardware space. Now, it is the turn to decode that using a corresponding file system module in the kernel space, and accordingly provide the user space file system interface, for it to be browsed like any other file systems.</p>
+<h2 id="the-5-sets-of-system-calls">The 5 sets of System Calls</h2>
+<p>Unlike character or block drivers, the file system drivers involve not just one structure of function pointers, but instead 5 structures of function pointers, for the various interfaces, provided by a file system. These are:</p>
+<ul>
+<li>struct file_system_type &#x2013; contains functions to operate on the super block</li>
+<li>struct super_operations &#x2013; contains functions to operate on the inodes</li>
+<li>struct inode_operations &#x2013; contains functions to operate on the directory entries</li>
+<li>struct file_operations &#x2013; contains functions to operate on the file data (through page cache)</li>
+<li>struct address_space_operations &#x2013; contains page cache operations for the file data</li>
+</ul>
+<p>With these, there were many new terms for Pugs. He referred the following glossary to understand the various terms used above and later in the file system module development:</p>
+<ul>
+<li><em>Page cache or Buffer cache:</em> Pool of RAM buffers, each of page size (typically 4096 bytes). These buffers are used as the cache for the file data read from the underlying hardware, thus increasing the performance of file operations</li>
+<li><em>Inode:</em> Structure containing the meta data / information of a file, like permissions, owner, etc. Though file name is a meta data of a file, for better space utilization, in typical Linux file systems, it is not kept in inode, instead in something called directory entries. Collection of inodes, is called an inode table</li>
+<li><em>Directory entry:</em> Structure containing the name and inode number of a file or directory. In typical Linux based file systems, a collection of directory entries for the immediate files and directories of say directory D, is stored in the data blocks of the directory D</li>
+<li><em>Super block:</em> Structure containing the information about the various data structures of the file systems, like the inode tables, &#x2026; Basically the meta meta data, i.e. meta data for the meta data</li>
+<li><em>Virtual File System (VFS):</em> Conceptual file system layer interfacing the kernel space to user space in an abstract manner, showing &#x201C;everything&#x201D; as a file, and translating their operations from user to the appropriate entity in the kernel space.</li>
+</ul>
+<p>Each one of the above five structures contains a list of function pointers, which needs to be populated depending on what all features are there or to be supported in the file system (module). For example, struct file_system_type may contain system calls for mounting and unmounting a file system, basically operating on its super block; struct super_operations may contain inode read/write system calls; struct inode_operations may contain function to lookup directory entries; struct file_operations may generically operate on the page cached file data, which may in turn invoke page cache operations, defined in the struct address_space_operations. For these various operations, most of these functions will then interface with the corresponding underlying block device driver to ultimately operate with the formatted file system in the hardware space.</p>
+<p>To start with Pugs laid out the complete framework of his real SFS module, but with minimal functionality, good enough to compile, load, and not crash the kernel. He populated only the first of these five structures &#x2013; the struct file_system_type; and left all the others empty. Here&#x2019;s the exact code of the structure definitions:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/fs.h&gt;</span> /* For system calls, structures, ... */</span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> file_system_type sfs;
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> super_operations sfs_sops;
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> inode_operations sfs_iops;
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> file_operations sfs_fops;
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> address_space_operations sfs_aops;
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/version.h&gt;</span> /* For LINUX_VERSION_CODE &amp; KERNEL_VERSION */</span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> file_system_type sfs =
+{
+    name: <span class="hljs-string">&quot;sfs&quot;</span>, <span class="hljs-comment">/* Name of our file system */</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">2</span>,<span class="hljs-number">6</span>,<span class="hljs-number">38</span>))</span>
+    get_sb:  sfs_get_sb,
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+    mount:  sfs_mount,
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+    kill_sb: kill_block_super,
+    owner: THIS_MODULE
+};
+</code></pre>
+<p>Note that before Linux kernel version 2.6.38, the mount function pointer was referred as get_sb, and also, it used to have slightly different parameters. And hence, the above #if for it to be compatible at least across 2.6.3x and possibly with 3.x kernel versions &#x2013; no guarantee for others. Accordingly, the corresponding functions sfs_get_sb() and sfs_mount(), are also #if&#x2019;d, as follows:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/kernel.h&gt;</span> /* For printk, ... */</span>
+
+<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">2</span>,<span class="hljs-number">6</span>,<span class="hljs-number">38</span>))
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">sfs_get_sb</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file_system_type *fs_type, <span class="hljs-keyword">int</span> flags,
+            <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> *devname, <span class="hljs-keyword">void</span> *data, <span class="hljs-keyword">struct</span> vfsmount *vm)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;sfs: devname = %s\n&quot;</span>, devname);
+
+    <span class="hljs-comment">/* sfs_fill_super this will be called to fill the super block */</span>
+    <span class="hljs-keyword">return</span> get_sb_bdev(fs_type, flags, devname, data, &amp;sfs_fill_super, vm);
+}
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> dentry *<span class="hljs-title">sfs_mount</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file_system_type *fs_type,
+                    <span class="hljs-keyword">int</span> flags, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> *devname, <span class="hljs-keyword">void</span> *data)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;sfs: devname = %s\n&quot;</span>, devname);
+
+    <span class="hljs-comment">/* sfs_fill_super this will be called to fill the super block */</span>
+    <span class="hljs-keyword">return</span> mount_bdev(fs_type, flags, devname, data, &amp;sfs_fill_super);
+}
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+</code></pre>
+<p>The only difference in the above 2 functions is that in the later, the VFS mount point related structure has been removed. The printk() in there would display the underlying partition&#x2019;s device file which the user is going to mount, basically the pen drive&#x2019;s SFS formatted partition. get_sb_bdev() and mount_bdev() are generic block device mount functions for the respective kernel versions, defined in fs/super.c and prototyped in <linux fs.h="">. Pugs also used them, as most other file system writers do. Are you wondering: Does all file system mount a block device, the same way? Most of it yes, except the part where the mount operation needs to fill in the VFS&#x2019; super block structure (struct super_block), as per the super block of the underlying file system &#x2013; obviously that most probably would be different. But then how does it do that? Observe carefully, in the above functions, apart from passing all the parameters as is, there is an additional parameter sfs_fill_super, and that is Pugs&#x2019; custom function to fill the VFS&#x2019; super block, as per the SFS file system.</linux></p>
+<p>Unlike the mount function pointer, the unmount function pointer has been same (kill_sb) for quite some kernel versions; and in unmounting, there is not even the minimal distinction required across different file systems. So, the generic block device unmount function kill_block_super() has been used directly as the function pointer.</p>
+<p>In sfs_fill_super(), Pugs is ideally supposed to read the super block from the underlying hardware-space SFS, and then accordingly translate and fill that into VFS&#x2019; super block to enable VFS to provide the user space file system interface. But he is yet to figure that out, as how to read from the underlying block device, in the kernel space. Information of which block device to use, is already embedded into the super_block structure itself, obtained from the user issuing the mount command. But as Pugs decided to get the bare bone real SFS up, first, he went ahead writing this sfs_super_fill() function also as a hard-coded fill function. And with that itself, he registered the Simula file system with the VFS. As any other Linux driver, here&#x2019;s the file system driver&#x2019;s constructor and destructor for that:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/module.h&gt;</span> /* For module related macros, ... */</span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> __<span class="hljs-function">init <span class="hljs-title">sfs_init</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span>
+</span>{
+    <span class="hljs-keyword">int</span> err;
+
+    err = register_filesystem(&amp;sfs);
+    <span class="hljs-keyword">return</span> err;
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> __<span class="hljs-function"><span class="hljs-built_in">exit</span> <span class="hljs-title">sfs_exit</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span>
+</span>{
+    unregister_filesystem(&amp;sfs);
+}
+
+module_init(sfs_init);
+module_exit(sfs_exit);
+</code></pre>
+<p>Both <code>register_filesystem()</code> and <code>unregister_filesystem()</code> takes pointer to the the struct file_system_type sfs (filled above), as their parameter, to respectively register and unregister the file system described by it.</p>
+<h2 id="hardcoded-sfs-super-block-and-root-inode">Hard-coded SFS super block and root inode</h2>
+<p>And yes, here&#x2019;s the hard-coded <code>sfs_fill_super()</code> function:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&quot;real_sfs_ds.h&quot;</span> /* For SFS related defines, data structures, ... */</span>
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">sfs_fill_super</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> super_block *sb, <span class="hljs-keyword">void</span> *data, <span class="hljs-keyword">int</span> silent)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;sfs: sfs_fill_super\n&quot;</span>);
+
+    sb-&gt;s_blocksize = SIMULA_FS_BLOCK_SIZE;
+    sb-&gt;s_blocksize_bits = SIMULA_FS_BLOCK_SIZE_BITS;
+    sb-&gt;s_magic = SIMULA_FS_TYPE;
+    sb-&gt;s_type = &amp;sfs; <span class="hljs-comment">// file_system_type</span>
+    sb-&gt;s_op = &amp;sfs_sops; <span class="hljs-comment">// super block operations</span>
+
+    sfs_root_inode = iget_locked(sb, <span class="hljs-number">1</span>); <span class="hljs-comment">// obtain an inode from VFS</span>
+    <span class="hljs-keyword">if</span> (!sfs_root_inode)
+    {
+        <span class="hljs-keyword">return</span> -EACCES;
+    }
+    <span class="hljs-keyword">if</span> (sfs_root_inode-&gt;i_state &amp; I_NEW) <span class="hljs-comment">// allocated fresh now</span>
+    {
+        printk(KERN_INFO <span class="hljs-string">&quot;sfs: Got new root inode, let&apos;s fill in\n&quot;</span>);
+        sfs_root_inode-&gt;i_op = &amp;sfs_iops; <span class="hljs-comment">// inode operations</span>
+        sfs_root_inode-&gt;i_mode = S_IFDIR | S_IRWXU |
+            S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;
+        sfs_root_inode-&gt;i_fop = &amp;sfs_fops; <span class="hljs-comment">// file operations</span>
+        sfs_root_inode-&gt;i_mapping-&gt;a_ops = &amp;sfs_aops; <span class="hljs-comment">// address operations</span>
+        unlock_new_inode(sfs_root_inode);
+    }
+    <span class="hljs-keyword">else</span>
+    {
+        printk(KERN_INFO <span class="hljs-string">&quot;sfs: Got root inode from inode cache\n&quot;</span>);
+    }
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">4</span>,<span class="hljs-number">0</span>))</span>
+    sb-&gt;s_root = d_alloc_root(sfs_root_inode);
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+    sb-&gt;s_root = d_make_root(sfs_root_inode);
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+    <span class="hljs-keyword">if</span> (!sb-&gt;s_root)
+    {
+        iget_failed(sfs_root_inode);
+        <span class="hljs-keyword">return</span> -ENOMEM;
+    }
+
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+</code></pre>
+<p>As mentioned earlier, this function is basically supposed to read the underlying SFS super block, and accordingly translate and fill the struct super_block, pointed to by its first parameter sb. So, understanding it is same as understanding the minimal fields of the struct super_block, which are getting filled up. The first three are the block size, its logarithm base 2, and the type/magic code of the Simula file system. As Pugs codes further, we shall see that once he gets the super block from the hardware space, he would instead get these values from that super block, and more importantly verify them, to ensure that the correct partition is being mounted.</p>
+<p>After that, the various structure pointers are pointed to their corresponding structure of the function pointers. Last but not least, the root inode&#x2019;s pointer s_root is pointed to the struct inode structure, obtained from VFS&#x2019; inode cache, based on the inode number of root &#x2013; right now, which has been hard coded to 1 &#x2013; it may possibly change. If the inode structure is obtained fresh, i.e. for the first time, it is then filled as per the underlying SFS&#x2019; root inode&#x2019;s content. Also, the mode field is being hard-coded to &#x201C;drwxr-xr-x&#x201C;. Apart from that, the usual structure pointers are being initialized by the corresponding structure addresses. And finally, the root&#x2019;s inode is being attached to the super block using d_alloc_root() or d_make_root(), as per the kernel version.</p>
+<p>All the above code pieces put in together as the bare bone real_sfs_bb.c, along with the real_sfs_ds.h (based on the same file created earlier), and a supporting Makefile are available from <a href="http://sysplay.in/blog/code/rsfsbb_code.tbz2" target="_blank">rsfsbb_code.tbz2</a>.</p>
+<h2 id="bare-bone-sfs-module-in-action">Bare bone SFS module in action</h2>
+<p>Once compiled using make, getting the real_sfs_bb.ko driver, Pugs did his usual unusual experiments, shown as in Figure 38.</p>
+<p><img src="../Images/Part22/figure_38_bare_bone_real_sfs_experiments-1024x549.png" alt="Figure 38"></p>
+<p>Pugs&#x2019; experiments (Explanation of Figure 38):</p>
+<ul>
+<li>Checked the kernel window /proc/filesystems for the kernel supported file systems</li>
+<li>Loaded the real_sfs_bb.ko driver</li>
+<li>Re-checked the kernel window /proc/filesystems for the kernel supported file systems. Now, it shows sfs listed at the end</li>
+<li>Did a mount of his pen drive partition <code>/dev/sdb1</code> onto <code>/mnt</code>using the sfs file system. Checked the dmesg logs on the adjacent window. (Keep in mind, that right now, the <code>sfs_fill_super()</code> is not really reading the partition, and hence not doing any checks. So, it really doesn&#x2019;t matter as to how the <code>/dev/sdb1</code> is formatted.) But yes, the mount output shows that it is mounted using the sfs file system</li>
+</ul>
+<p>Oops!!! But <code>df</code> output shows &#x201C;Function not implemented&#x201D;, <code>cd</code>gives &#x201C;Not a directory&#x201D;. Aha!! Pugs haven&#x2019;t implemented any other functions in any of the other four function pointer structures, yet. So, that&#x2019;s expected.</p>
+<p><strong>Note: The above experiments are using &#x201C;sudo&#x201D;. Instead one may get into root shell and do the same without a &#x201C;sudo&#x201D;.</strong></p>
+<p>Okay, so no kernel crashes, and a bare bone file system in action &#x2013; Yippee. Ya! Ya! Pugs knows that df, cd, &#x2026; are not yet functional. For that, he needs to start adding the various system calls in the other (four) function pointer structures to be able to do cool-cool browsing, the same way as is done with all other file systems, using the various shell commands. And yes, Pugs is already onto his task &#x2013; after all he needs to have a geeky demo for his final semester project.</p>
+
                     
                     </section>
                 

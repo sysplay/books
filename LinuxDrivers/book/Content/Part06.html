@@ -53,7 +53,7 @@
         data-chapter-title="Decoding Character Device File Operations"
         data-filepath="Content/Part06.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,113 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="decoding-the-character-device-file-operations">Decoding the character device file operations</h1>
+<blockquote>
+<p>This sixth article, which is part of the series on Linux device drivers, is continuation of the various concepts of character drivers and their implementation, dealt with in the previous two articles.</p>
+</blockquote>
+<p>So, what was your guess on how would Shweta crack the nut? Obviously, using the nut cracker named Pugs. Wasn&#x2019;t it obvious? <Smile> In our previous article, we saw how Shweta was puzzled with reading no data, even after writing into the /dev/mynull character device file. Suddenly, a bell rang &#x2013; not inside her head, a real one at the door. And for sure, there was the avatar of Pugs.</Smile></p>
+<p>&#x201C;How come you&#x2019;re here?&#x201D;, exclaimed Shweta. &#x201C;After reading your tweet, what else? Cool that you cracked your first character driver all on your own. That&#x2019;s amazing. So, what are you up to now?&#x201D;, said Pugs. &#x201C;I&#x2019;ll tell you on the condition that you do not become a spoil sport&#x201D;, replied Shweta. &#x201C;Okay yaar, I&#x2019;ll only give you pointers&#x201D;. &#x201C;And that also, only if I ask for&#x201D;. &#x201C;Okie&#x201D;. &#x201C;I am trying to decode the working of character device file operations&#x201D;. &#x201C;I have an idea. Why don&#x2019;t you decode and explain me your understanding?&#x201D;. &#x201C;Not a bad idea&#x201D;. With that, Shweta tailed the dmesg log to observe the printk&#x2018;s output from her driver. Alongside, she opened her null driver code on her console, specifically observing the device file operations <code>my_open</code>, <code>my_close</code>, <code>my_read</code>, and <code>my_write</code>.</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">my_open</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *i, <span class="hljs-keyword">struct</span> file *f)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: open()\n&quot;</span>);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">my_close</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *i, <span class="hljs-keyword">struct</span> file *f)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: close()\n&quot;</span>);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_read</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">char</span> __user *buf, size_t len, loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: read()\n&quot;</span>);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_write</span><span class="hljs-params">(
+        <span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> __user *buf, size_t len, loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: write()\n&quot;</span>);
+    <span class="hljs-keyword">return</span> len;
+}
+</code></pre>
+<p>Based on the earlier understanding of return value of the functions in kernel, <code>my_open()</code> and <code>my_close()</code> are trivial. Their return types being int and both of them returning zero, meaning success. However, the return types of both <code>my_read()</code> and <code>my_write()</code> are not <code>int</code>, but <code>ssize_t</code>. On further digging through kernel headers, that turns out to be signed word. So, returning a negative number would be a usual error. But a non-negative return value would have an additional meaning. For read it would be number of bytes read, and for write it would be number of bytes written.</p>
+<h2 id="reading-the-device-file">Reading the device file</h2>
+<p>For understanding this in detail, the complete flow has to be re-looked at. Let&#x2019;s take read first. So, when the user does a read onto the device file /dev/mynull, that system call comes to the virtual file system (VFS) layer in the kernel. VFS decodes the <code>&lt;major, minor&gt;</code> tuple &amp; figures out that it need to redirect it to the driver&#x2019;s function <code>my_read()</code>, registered with it. So from that angle, <code>my_read()</code> is invoked as a request to read, from us &#x2013; the device driver writers. And hence, its return value would indicate to the requester &#x2013; the user, as to how many bytes is he getting from the read request. In our null driver example, we returned zero &#x2013; meaning no bytes available or in other words end of file. And hence, when the device file is being read, the result is always nothing, independent of what is written into it.</p>
+<p>&#x201C;Hmmm!!! So, if I change it to 1, would it start giving me some data?&#x201D;, Pugs asked in his verifying style. Shweta paused for a while &#x2013; looked at the parameters of the function <code>my_read()</code> and confirmed with a but &#x2013; data would be sent but it would be some junk data, as the <code>my_read()</code> function is not really populating the data into the buf (second parameter of <code>my_read()</code>), provided by the user. In fact, <code>my_read()</code> should write data into buf, according to len (third parameter of <code>my_read()</code>), the count in bytes requested by the user.</p>
+<p>To be more specific, write less than or equal to len bytes of data into buf, and the same number be used as the return value. It is not a typo &#x2013; in read, we &#x2018;write&#x2019; into buf &#x2013; that&#x2019;s correct. We read the data from (possibly) an underlying device and then write that data into the user buffer, so that the user gets it, i.e. reads it. &#x201C;That&#x2019;s really smart of you&#x201D;, expressed Pugs with sarcasm.</p>
+<h2 id="writing-into-the-device-file">Writing into the device file</h2>
+<p>Similarly, the write is just the reverse procedure. User provides len (third parameter of <code>my_write()</code>) bytes of data to be written, into buf (second parameter of <code>my_write()</code>). <code>my_write()</code> would read that data and possibly write into an underlying device, and accordingly return the number of bytes, it has been able to write successfully. &#x201C;Aha!! That&#x2019;s why all my writes into <code>/dev/mynull</code>have been successful, without being actually doing any read or write&#x201D;, exclaimed Shweta filled with happiness of understanding the complete flow of device file operations.</p>
+<h2 id="preserving-the-last-character">Preserving the last character</h2>
+<p>That was enough &#x2013; Shweta not giving any chance to Pugs to add, correct or even speak. So, Pugs came up with a challenge. &#x201C;Okay. Seems like you are thoroughly clear with the read/write funda. Then, here&#x2019;s a question for you. Can you modify these <code>my_read()</code> and <code>my_write()</code> functions such that whenever I read <code>/dev/mynull</code>, I get the last character written into <code>/dev/mynull</code>?&#x201D;</p>
+<p>Confident enough, Shweta took the challenge and modified the <code>my_read()</code> and <code>my_write()</code> functions as follows, along with an addition of a static global character:</p>
+<pre><code class="lang-C"><span class="hljs-keyword">static</span> <span class="hljs-keyword">char</span> c;
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_read</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">char</span> __user *buf, size_t len, loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: read()\n&quot;</span>);
+    buf[<span class="hljs-number">0</span>] = c;
+    <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_write</span><span class="hljs-params">(
+        <span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> __user *buf, size_t len, loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: write()\n&quot;</span>);
+    c = buf[len &#x2013; <span class="hljs-number">1</span>];
+    <span class="hljs-keyword">return</span> len;
+}
+</code></pre>
+<p>&#x201C;Almost there, but what if the user has provided an invalid buffer, or what if the user buffer is swapped out. Wouldn&#x2019;t this direct access of user space buf just crash and oops the kernel&#x201D;, pounced Pugs. Shweta not giving up the challenge, dives into her collated material and figures out that there are two APIs just to ensure that the user space buffers are safe to access and then update them, as well. With the complete understanding of the APIs, she re-wrote the above code snippet along with including the corresponding header <code>&lt;asm/uaccess.h&gt;</code>, as follows, leaving no chance for Pugs to comment:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;asm/uaccess.h&gt;</span></span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">char</span> c;
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_read</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">char</span> __user *buf, size_t len, loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: read()\n&quot;</span>);
+    <span class="hljs-keyword">if</span> (copy_to_user(buf, &amp;c, <span class="hljs-number">1</span>) != <span class="hljs-number">0</span>)
+        <span class="hljs-keyword">return</span> -EFAULT;
+    <span class="hljs-keyword">else</span>
+        <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_write</span><span class="hljs-params">(
+        <span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> __user *buf, size_t len, loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: write()\n&quot;</span>);
+    <span class="hljs-keyword">if</span> (copy_from_user(&amp;c, buf + len &#x2013; <span class="hljs-number">1</span>, <span class="hljs-number">1</span>) != <span class="hljs-number">0</span>)
+        <span class="hljs-keyword">return</span> -EFAULT;
+    <span class="hljs-keyword">else</span>
+        <span class="hljs-keyword">return</span> len;
+}
+</code></pre>
+<p>Then, Shweta repeated the usual build and test steps as follows:</p>
+<ul>
+<li>Build the modified null driver (<code>.ko</code> file) by running make.</li>
+<li>Load the driver using <code>insmod</code>.</li>
+<li>Write into <code>/dev/mynull</code>, say using <code>echo -n &#x201C;Pugs&#x201D; &gt; /dev/mynull</code></li>
+<li>Read from <code>/dev/mynull</code> using <code>cat /dev/mynull</code> (Stop using Ctrl+C)</li>
+<li>Unload the driver using <code>rmmod</code>.</li>
+</ul>
+<h2 id="summing-up">Summing up</h2>
+<p>On cat&#x2018;ing <code>/dev/mynull</code>, the output was a non-stop infinite sequence of &#x2018;s&#x2019;, as <code>my_read()</code> gives the last one character forever. So, Pugs intervenes and presses <code>Ctrl+C</code> to stop the infinite read, and tries to explain, &#x201C;If this is to be changed to &#x2018;the last character only once&#x2019;, my_read() needs to return 1 the first time and zero from second time onwards. This can be achieved using the <code>off</code> (fourth parameter of <code>my_read()</code>)&#x201D;. Shweta nods her head to support Pugs&#x2019; ego.</p>
+<h2 id="add-on">Add on</h2>
+<p>And here&#x2019;s the modified read using the <code>off</code>:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_read</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">char</span> __user *buf, size_t len, loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: read()\n&quot;</span>);
+    <span class="hljs-keyword">if</span> (*off == <span class="hljs-number">0</span>)
+    {
+        <span class="hljs-keyword">if</span> (copy_to_user(buf, &amp;c, <span class="hljs-number">1</span>) != <span class="hljs-number">0</span>)
+            <span class="hljs-keyword">return</span> -EFAULT;
+        <span class="hljs-keyword">else</span>
+        {
+            (*off)++;
+            <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+        }
+    }
+    <span class="hljs-keyword">else</span>
+        <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+</code></pre>
+
                     
                     </section>
                 

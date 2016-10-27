@@ -53,7 +53,7 @@
         data-chapter-title="File Systems - A Semester Project"
         data-filepath="Content/Part18.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,153 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="file-systems-the-semester-project">File Systems: The Semester Project</h1>
+<blockquote>
+<p>This eighteenth article, which is part of the series on Linux device drivers, kick starts with introducing the concept of a file system, by simulating one in user space.</p>
+</blockquote>
+<p>If you have not yet guessed the semester project topic, then you should have a careful look at the table of contents of the various books on Linux device drivers. You&#x2019;ll find that no book lists a chapter on file systems. Not because they are not used or not useful. In fact, there are close to 100 different file systems existing, as of today, and possibly most of them in active use. Then, why are they not talked in general? And are so many file systems required? Which one of them is the best? Let&#x2019;s understand these one by one.</p>
+<p>In reality, there is no best file system, and in fact there may not be one to come, as well. This is because a particular file system suits best only for a particular set of requirements. Thus, different requirements ask for different best file systems, leading to so many active file systems and many more to come. So, basically they are not generic enough to be talked generically, rather more of a research topic. And the reason for them being the toughest of all drivers is simple: Least availability of generic written material &#x2013; the best documentation being the code of various file systems. Hmmm! Sounds perfect for a semester project, right?</p>
+<p>In order to get to do such a research project, a lot of smaller steps has to be taken. The first one being understanding the concept of a file system itself. That could be done best by simulating one in user space. Shweta took the ownership of getting this first step done, as follows:</p>
+<ul>
+<li>Use a regular file for a partition, that is for the actual data storage of the file system (Hardware space equivalent)</li>
+<li>Design a basic file system structure (Kernel space equivalent) and implement the format/mkfs command for it, over the regular file</li>
+<li>Provide an interface/shell to type commands and operate on the file system, similar to the usual bash shell. In general, this step is achieved by the shell along with the corresponding file system driver in kernel space. But here that translation is embodied/simulated into the user space interface, itself. (Next article shall discuss this in detail)</li>
+</ul>
+<p>The default regular file chosen is <code>.sfsf</code> (simula-ting file system file) in the current directory. Starting <code>.</code> (dot) is for it to be hidden. The basic file system design mainly contains two structures, the super block containing the info about the file system, and the file entry structure containing the info about each file in the file system. Here are Shweta&#x2019;s defines and structures defined in <code>sfs_ds.h</code></p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">ifndef</span> SFS_DS_H</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> SFS_DS_H</span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> SIMULA_FS_TYPE <span class="hljs-number">0x13090D15</span> <span class="hljs-comment">/* Magic Number for our file system */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> SIMULA_FS_BLOCK_SIZE <span class="hljs-number">512</span> <span class="hljs-comment">/* in bytes */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> SIMULA_FS_ENTRY_SIZE <span class="hljs-number">64</span> <span class="hljs-comment">/* in bytes */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> SIMULA_FS_DATA_BLOCK_CNT ((SIMULA_FS_ENTRY_SIZE - (<span class="hljs-number">16</span> + <span class="hljs-number">3</span> * <span class="hljs-number">4</span>)) / <span class="hljs-number">4</span>)</span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> SIMULA_DEFAULT_FILE <span class="hljs-string">&quot;.sfsf&quot;</span></span>
+
+<span class="hljs-keyword">typedef</span> <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> <span class="hljs-keyword">uint4_t</span>;
+
+<span class="hljs-keyword">typedef</span> <span class="hljs-keyword">struct</span> sfs_super_block
+{
+    <span class="hljs-keyword">uint4_t</span> type; <span class="hljs-comment">/* Magic number to identify the file system */</span>
+    <span class="hljs-keyword">uint4_t</span> block_size; <span class="hljs-comment">/* Unit of allocation */</span>
+    <span class="hljs-keyword">uint4_t</span> partition_size; <span class="hljs-comment">/* in blocks */</span>
+    <span class="hljs-keyword">uint4_t</span> entry_size; <span class="hljs-comment">/* in bytes */</span> 
+    <span class="hljs-keyword">uint4_t</span> entry_table_size; <span class="hljs-comment">/* in blocks */</span>
+    <span class="hljs-keyword">uint4_t</span> entry_table_block_start; <span class="hljs-comment">/* in blocks */</span>
+    <span class="hljs-keyword">uint4_t</span> entry_count; <span class="hljs-comment">/* Total entries in the file system */</span>
+    <span class="hljs-keyword">uint4_t</span> data_block_start; <span class="hljs-comment">/* in blocks */</span>
+    <span class="hljs-keyword">uint4_t</span> reserved[SIMULA_FS_BLOCK_SIZE / <span class="hljs-number">4</span> - <span class="hljs-number">8</span>];
+} <span class="hljs-keyword">sfs_super_block_t</span>; <span class="hljs-comment">/* Making it of SIMULA_FS_BLOCK_SIZE */</span>
+
+<span class="hljs-keyword">typedef</span> <span class="hljs-keyword">struct</span> sfs_file_entry
+{
+    <span class="hljs-keyword">char</span> name[<span class="hljs-number">16</span>];
+    <span class="hljs-keyword">uint4_t</span> size; <span class="hljs-comment">/* in bytes */</span>
+    <span class="hljs-keyword">uint4_t</span> timestamp; <span class="hljs-comment">/* Seconds since Epoch */</span>
+    <span class="hljs-keyword">uint4_t</span> perms; <span class="hljs-comment">/* Permissions for user */</span>
+    <span class="hljs-keyword">uint4_t</span> blocks[SIMULA_FS_DATA_BLOCK_CNT];
+} <span class="hljs-keyword">sfs_file_entry_t</span>;
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+</code></pre>
+<p>Note that Shweta has put some redundant fields in the <code>sfs_super_block_t</code> rather than computing them every time. And practically that is not space inefficient, as any way lot of empty reserved space is available in the super block, which is expected to be the complete first block of a partition. For example, <code>entry_count</code> is a redundant field as it is same as the entry table&#x2019;s size (in bytes) divided by the entry&#x2019;s size, which both are part of the super block structure. Moreover, the <code>data_block_start</code> number could also be computed by how many blocks have been used before it, but again not preferred.</p>
+<p>Also, note the hard coded assumptions made about the block size of 512 bytes, and some random magic number for the simula file system. This magic number is used to verify that we are dealing with the right file system, when operating on it.</p>
+<p>Coming to the file entry, it contains the following for every file:</p>
+<ul>
+<li>Name of up to 15 characters (1 byte for &#x201D;)</li>
+<li>Size in bytes</li>
+<li>Time stamp (creation or modification? Not yet decided by Shweta)</li>
+<li>Permissions (just one set, for the user)</li>
+<li>Array of block numbers for up to 9 data blocks. Why 9? To make the complete entry of <code>SIMULA_FS_ENTRY_SIZE (64)</code>.</li>
+</ul>
+<p>With the file system design ready, the make file system <code>(mkfs)</code> or more commonly known format application is implemented next, as <code>format_sfs.c</code>:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;stdio.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;stdlib.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;sys/types.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;sys/stat.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;fcntl.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;unistd.h&gt;</span></span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&quot;sfs_ds.h&quot;</span></span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> SFS_ENTRY_RATIO <span class="hljs-number">0.10</span> <span class="hljs-comment">/* 10% of all blocks */</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> SFS_ENTRY_TABLE_BLOCK_START <span class="hljs-number">1</span></span>
+
+<span class="hljs-keyword">sfs_super_block_t</span> sb =
+{
+    .type = SIMULA_FS_TYPE,
+    .block_size = SIMULA_FS_BLOCK_SIZE,
+    .entry_size = SIMULA_FS_ENTRY_SIZE,
+    .entry_table_block_start = SFS_ENTRY_TABLE_BLOCK_START
+};
+<span class="hljs-keyword">sfs_file_entry_t</span> fe; <span class="hljs-comment">/* All 0&apos;s */</span>
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">write_super_block</span><span class="hljs-params">(<span class="hljs-keyword">int</span> sfs_handle, sfs_super_block_t *sb)</span>
+</span>{
+    write(sfs_handle, sb, <span class="hljs-keyword">sizeof</span>(<span class="hljs-keyword">sfs_super_block_t</span>));
+}
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">clear_file_entries</span><span class="hljs-params">(<span class="hljs-keyword">int</span> sfs_handle, sfs_super_block_t *sb)</span>
+</span>{
+    <span class="hljs-keyword">int</span> i;
+
+    <span class="hljs-keyword">for</span> (i = <span class="hljs-number">0</span>; i &lt; sb-&gt;entry_count; i++)
+    {
+        write(sfs_handle, &amp;fe, <span class="hljs-keyword">sizeof</span>(fe));
+    }
+}
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">mark_data_blocks</span><span class="hljs-params">(<span class="hljs-keyword">int</span> sfs_handle, sfs_super_block_t *sb)</span>
+</span>{
+    <span class="hljs-keyword">char</span> c = <span class="hljs-number">0</span>;
+
+    lseek(sfs_handle, sb-&gt;partition_size * sb-&gt;block_size - <span class="hljs-number">1</span>, SEEK_SET);
+    write(sfs_handle, &amp;c, <span class="hljs-number">1</span>); <span class="hljs-comment">/* To make the file size to partition size */</span>
+}
+
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">main</span><span class="hljs-params">(<span class="hljs-keyword">int</span> argc, <span class="hljs-keyword">char</span> *argv[])</span>
+</span>{
+    <span class="hljs-keyword">int</span> sfs_handle;
+
+    <span class="hljs-keyword">if</span> (argc != <span class="hljs-number">2</span>)
+    {
+        <span class="hljs-built_in">fprintf</span>(<span class="hljs-built_in">stderr</span>, <span class="hljs-string">&quot;Usage: %s &lt;partition size in 512-byte blocks&gt;\n&quot;</span>,
+            argv[<span class="hljs-number">0</span>]);
+        <span class="hljs-keyword">return</span> <span class="hljs-number">1</span>;
+    }
+    sb.partition_size = atoi(argv[<span class="hljs-number">1</span>]);
+    sb.entry_table_size = sb.partition_size * SFS_ENTRY_RATIO;
+    sb.entry_count = sb.entry_table_size * sb.block_size / sb.entry_size;
+    sb.data_block_start = SFS_ENTRY_TABLE_BLOCK_START + sb.entry_table_size;
+
+    sfs_handle = creat(SIMULA_DEFAULT_FILE,
+        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    <span class="hljs-keyword">if</span> (sfs_handle == -<span class="hljs-number">1</span>)
+    {
+        perror(<span class="hljs-string">&quot;No permissions to format&quot;</span>);
+        <span class="hljs-keyword">return</span> <span class="hljs-number">2</span>;
+    }
+    write_super_block(sfs_handle, &amp;sb);
+    clear_file_entries(sfs_handle, &amp;sb);
+    mark_data_blocks(sfs_handle, &amp;sb);
+    close(sfs_handle);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+</code></pre>
+<p>Note the heuristic of 10% of total space to be used for the file entries, defined by SFS_ENTRY_RATIO. Apart from that, this format application takes the partition size as input and accordingly creates the default file <code>.sfsf</code>, with:</p>
+<ul>
+<li>Its first block as the super block, using <code>write_super_block()</code></li>
+<li>The next 10% of total blocks as the file entry&#x2019;s zeroed out table, using <code>clear_file_entries()</code></li>
+<li>And the remaining as the data blocks, using <code>mark_data_blocks()</code>. This basically writes a zero at the end, to actually extend the underlying file <code>.sfsf</code> to the partition size
+As any other <code>format/mkfs</code> application, <code>format_sfs.c</code> is compiled using gcc, and executed on the shell as follows:</li>
+</ul>
+<pre><code class="lang-shell">$ gcc format_sfs.c -o format_sfs
+$ ./format_sfs 1024 # Partition size in blocks of 512-bytes
+$ ls -al # List the .sfsf created with a size of 512 KiBytes
+</code></pre>
+<p>Figure 33 shows the <code>.sfsf</code> pictorially for the partition size of 1024 blocks of 512 bytes each.</p>
+<p><img src="../Images/Part18/figure_33_simula_file_system.png" alt="Figure 33"></p>
+<h2 id="summing-up">Summing up</h2>
+<p>With the above design of simula file system (<code>sfs_ds.h</code>), along with the implementation for its format command (<code>format_sfs.c</code>), Shweta has thus created the empty file system over the simulated partition <code>.sfsf</code>. Now, as listed earlier, the final step in simulating the user space file system is to create the interface/shell to type commands and operate on the empty file system just created on <code>.sfsf</code>. Let&#x2019;s watch out for Shweta coding that as well, completing the first small step towards understanding their project.</p>
+
                     
                     </section>
                 

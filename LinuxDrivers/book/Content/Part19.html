@@ -53,7 +53,7 @@
         data-chapter-title="File Systems: A Semester Project - II"
         data-filepath="Content/Part19.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,231 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="file-systems-the-semester-project-&#x2013;-part-ii">File Systems: The Semester Project &#x2013; Part II</h1>
+<blockquote>
+<p>This nineteenth article, which is part of the series on Linux device drivers, continues with introducing the concept of a file system, by simulating one in user space.</p>
+</blockquote>
+<p>In the previous article, Shweta readied the partition on the .sfsf file by formating it with the format_sfs application. To complete the understanding of a file system, the next step in its simulation is to browse and play around with the file system created. Here is Shweta&#x2019;s first-cut browser application to achieve the same. Let&#x2019;s have a closer look. <code>sfs_ds.h</code> is the same header file, already created by Shweta.</p>
+<pre><code class="lang-C">#include &lt;stdio.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;string.h&gt;
+#include &lt;time.h&gt;
+
+#include &quot;sfs_ds.h&quot;
+
+sfs_super_block_t sb;
+
+void sfs_list(int sfs_handle)
+{
+    int i;
+    sfs_file_entry_t fe;
+
+    lseek(sfs_handle, sb.entry_table_block_start * sb.block_size, SEEK_SET);
+    for (i = 0; i &lt; sb.entry_count; i++)
+    {
+        read(sfs_handle, &amp;fe, sizeof(sfs_file_entry_t));
+        if (!fe.name[0]) continue;
+        printf(&quot;%-15s  %10d bytes  %c%c%c  %s&quot;,
+            fe.name, fe.size,
+            fe.perms &amp; 04 ? &apos;r&apos; : &apos;-&apos;,
+            fe.perms &amp; 02 ? &apos;w&apos; : &apos;-&apos;,
+            fe.perms &amp; 01 ? &apos;x&apos; : &apos;-&apos;,
+            ctime((time_t *)&amp;fe.timestamp)
+            );
+    }
+}
+void sfs_create(int sfs_handle, char *fn)
+{
+    int i;
+    sfs_file_entry_t fe;
+
+    lseek(sfs_handle, sb.entry_table_block_start * sb.block_size, SEEK_SET);
+    for (i = 0; i &lt; sb.entry_count; i++)
+    {
+        read(sfs_handle, &amp;fe, sizeof(sfs_file_entry_t));
+        if (!fe.name[0]) break;
+        if (strcmp(fe.name, fn) == 0)
+        {
+            printf(&quot;File %s already exists\n&quot;, fn);
+            return;
+        }
+    }
+    if (i == sb.entry_count)
+    {
+        printf(&quot;No entries left\n&quot;, fn);
+        return;
+    }
+
+    lseek(sfs_handle, -(off_t)(sb.entry_size), SEEK_CUR);
+
+    strncpy(fe.name, fn, 15);
+    fe.name[15] = 0;
+    fe.size = 0;
+    fe.timestamp = time(NULL);
+    fe.perms = 07;
+    for (i = 0; i &lt; SIMULA_FS_DATA_BLOCK_CNT; i++)
+    {
+        fe.blocks[i] = 0;
+    }
+
+    write(sfs_handle, &amp;fe, sizeof(sfs_file_entry_t));
+}
+void sfs_remove(int sfs_handle, char *fn)
+{
+    int i;
+    sfs_file_entry_t fe;
+
+    lseek(sfs_handle, sb.entry_table_block_start * sb.block_size, SEEK_SET);
+    for (i = 0; i &lt; sb.entry_count; i++)
+    {
+        read(sfs_handle, &amp;fe, sizeof(sfs_file_entry_t));
+        if (!fe.name[0]) continue;
+        if (strcmp(fe.name, fn) == 0) break;
+    }
+    if (i == sb.entry_count)
+    {
+        printf(&quot;File %s doesn&apos;t exist\n&quot;, fn);
+        return;
+    }
+
+    lseek(sfs_handle, -(off_t)(sb.entry_size), SEEK_CUR);
+
+    memset(&amp;fe, 0, sizeof(sfs_file_entry_t));
+    write(sfs_handle, &amp;fe, sizeof(sfs_file_entry_t));
+}
+
+void browse_sfs(int sfs_handle)
+{
+    int done;
+    char cmd[256], *fn;
+    int ret;
+
+    done = 0;
+
+    printf(&quot;Welcome to SFS Browsing Shell v1.0\n\n&quot;);
+    printf(&quot;Block size     : %d bytes\n&quot;, sb.block_size);
+    printf(&quot;Partition size : %d blocks\n&quot;, sb.partition_size);
+    printf(&quot;File entry size: %d bytes\n&quot;, sb.entry_size);
+    printf(&quot;Entry tbl size : %d blocks\n&quot;, sb.entry_table_size);
+    printf(&quot;Entry count    : %d\n&quot;, sb.entry_count);
+    printf(&quot;\n&quot;);
+    while (!done)
+    {
+        printf(&quot; $&gt; &quot;);
+        ret = scanf(&quot;%[^\n]&quot;, cmd);
+        if (ret &lt; 0)
+        {
+            done = 1;
+            printf(&quot;\n&quot;);
+            continue;
+        }
+        else
+        {
+            getchar();
+            if (ret == 0) continue;
+        }
+        if (strcmp(cmd, &quot;?&quot;) == 0)
+        {
+            printf(&quot;Supported commands:\n&quot;);
+            printf(&quot;\t?\tquit\tlist\tcreate\tremove\n&quot;);
+            continue;
+        }
+        else if (strcmp(cmd, &quot;quit&quot;) == 0)
+        {
+            done = 1;
+            continue;
+        }
+        else if (strcmp(cmd, &quot;list&quot;) == 0)
+        {
+            sfs_list(sfs_handle);
+            continue;
+        }
+        else if (strncmp(cmd, &quot;create&quot;, 6) == 0)
+        {
+            if (cmd[6] == &apos; &apos;)
+            {
+                fn = cmd + 7;
+                while (*fn == &apos; &apos;) fn++;
+                if (*fn != &apos;&apos;)
+                {
+                    sfs_create(sfs_handle, fn);
+                    continue;
+                }
+            }
+        }
+        else if (strncmp(cmd, &quot;remove&quot;, 6) == 0)
+        {
+            if (cmd[6] == &apos; &apos;)
+            {
+                fn = cmd + 7;
+                while (*fn == &apos; &apos;) fn++;
+                if (*fn != &apos;&apos;)
+                {
+                    sfs_remove(sfs_handle, fn);
+                    continue;
+                }
+            }
+        }
+        printf(&quot;Unknown/Incorrect command: %s\n&quot;, cmd);
+        printf(&quot;Supported commands:\n&quot;);
+        printf(&quot;\t?\tquit\tlist\tcreate &lt;file&gt;\tremove &lt;file&gt;\n&quot;);
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    char *sfs_file = SIMULA_DEFAULT_FILE;
+    int sfs_handle;
+
+    if (argc &gt; 2)
+    {
+        fprintf(stderr, &quot;Incorrect invocation. Possibilities are:\n&quot;);
+        fprintf(stderr,
+            &quot;\t%s /* Picks up %s as the default partition_file */\n&quot;,
+            argv[0], SIMULA_DEFAULT_FILE);
+        fprintf(stderr, &quot;\t%s [ partition_file ]\n&quot;, argv[0]);
+        return 1;
+    }
+    if (argc == 2)
+    {
+        sfs_file = argv[1];
+    }
+    sfs_handle = open(sfs_file, O_RDWR);
+    if (sfs_handle == -1)
+    {
+        fprintf(stderr, &quot;Unable to browse SFS over %s\n&quot;, sfs_file);
+        return 2;
+    }
+    read(sfs_handle, &amp;sb, sizeof(sfs_super_block_t));
+    if (sb.type != SIMULA_FS_TYPE)
+    {
+        fprintf(stderr, &quot;Invalid SFS detected. Giving up.\n&quot;);
+        close(sfs_handle);
+        return 3;
+    }
+    browse_sfs(sfs_handle);
+    close(sfs_handle);
+    return 0;
+}
+</code></pre>
+<p>The above (shell like) program primarily reads the super block from the partition file (.sfsf by default, or the file provided from command line), and then gets into browsing the file system based on that information, using the <code>browse_sfs()</code> function. Note the check performed for the valid file system on the partition file using the magic number <code>SIMULA_FS_TYPE</code>.</p>
+<p><code>browse_sfs()</code> prints the file system information and provides four basic file system functionalities using the following commands:</p>
+<ul>
+<li>quit &#x2013; to quit the file system browser</li>
+<li>list &#x2013; to list the current files in the file system (using sfs_list())</li>
+<li>create <code>&lt;filename&gt;</code> &#x2013; to create a new file in the file system (using <code>sfs_create(filename)</code>)</li>
+<li>remove <code>&lt;filename&gt;</code> &#x2013; to remove an existing file from the file system (using <code>sfs_remove(filename)</code>)</li>
+</ul>
+<p>Figure 34 shows the browser in action, using the above commands.</p>
+<p><img src="../Images/Part19/figure_34_simula_file_system_browser-1024x549.png" alt="Figure 34"></p>
+<p>sfs_list() traverses through all the file entries in the partition and prints all the non-null filename entries &#x2013; with file name, size, permissions, and its creation time stamp. sfs_create() looks up for an available (null filename) entry and then updates it with the given filename, size of 0 bytes, permissions of &#x201C;rwx&#x201D;, and the current time stamp. And sfs_remove() looks up for an existing file entry, having the filename to be removed, and then nullifies it. The other parts in the above code are more of basic error handling cases like invalid command in browse_sfs(), existing file name in sfs_create(), non-existing file name in sfs_remove(), etc.</p>
+<p>Note that the above application is the first-cut one of a full-fledged application. And so the files created right now are just with the basic fixed parameters. And, there is no way to change their permissions, content, etc, yet. However, it must be clear by now that adding those features is just a matter of adding commands and their corresponding functions, which would be provided for a few more interesting features by Shweta as she further works out the details of the browsing application.</p>
+<h2 id="summing-up">Summing up</h2>
+<p>Once done with the other features as well, the next set of steps would take the project duo further closer to their final goals. Watch out for who takes charge of the next step of moving the file system logic to the kernel space.</p>
+
                     
                     </section>
                 

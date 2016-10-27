@@ -53,7 +53,7 @@
         data-chapter-title="Disk on RAM: Playing with Block Drivers"
         data-filepath="Content/Part15.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,121 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="disk-on-ram-playing-destructively">Disk on RAM: Playing destructively</h1>
+<blockquote>
+<p>This fifteenth article, which is part of the series on Linux device drivers, experiments with a dummy hard disk on RAM to demonstrate the block drivers.</p>
+</blockquote>
+<p>Play first, rules later</p>
+<p>After a delicious lunch, theory makes audience sleepy. So, let&#x2019;s start with the code itself. Code demonstrated is available at dor_code.tar.bz2. This tar ball contains 3 &#x2018;C&#x2019; source files, 2 &#x2018;C&#x2019; headers, and a Makefile. As usual, executing make will build the &#x2018;disk on ram&#x2019; driver (dor.ko) &#x2013; this time combining the 3 &#x2018;C&#x2019; files. Check out the Makefile to see how. make clean would do the usual clean of the built stuff.</p>
+<p>Once built, the following are the experimenting steps (Refer to Figures 25, 26, 27):</p>
+<ul>
+<li>Load the driver dor.ko using insmod. This would create the block device files representing the disk on 512 KibiBytes (KiB) of RAM, with 3 primary and 3 logical partitions.</li>
+<li>Checkout the automatically created block device files (/dev/rb*). /dev/rb is the entire disk of 512 KiB size. rb1, rb2, rb3 are the primary partitions with rb2 being the extended partition and containing the 3 logical partitions rb5, rb6, rb7.</li>
+<li>Read the entire disk (/dev/rb) using the disk dump utility dd.</li>
+<li>Zero out the first sector of the disk&#x2019;s first partition (/dev/rb1) again using dd.</li>
+<li>Write some text into the disk&#x2019;s first partition (/dev/rb1) using cat.</li>
+<li>Display the initial contents of the first partition (/dev/rb1) using the xxd utility. See Figure 26 for the xxd output.</li>
+<li>Display the partition info for the disk using fdisk. See Figure 27 for the fdisk output.</li>
+<li>(Quick) Format the third primary partition (/dev/rb3) as vfat filesystem (like your pen drive), using mkfs.vfat (Figure 27).</li>
+<li>Mount the newly formatted partition using mount, say at /mnt (Figure 27).</li>
+<li>Disk usage utility df would now show this partition mounted at /mnt (Figure 27). You may go ahead and store your files there. But, please remember that these partitions are all on a disk on RAM, and so non-persistent. Hence,</li>
+<li>Unloading the driver using &#x2018;rmmod dor&#x2018; would vanish everything. Though the partition needs to be unmounted using &#x2018;umount /mnt&#x2018; before doing that.</li>
+</ul>
+<p>Please note that all the above experimenting steps need to be executed with root privileges.</p>
+<p><img src="../Images/Part15/figure_25_dor_driver.png" alt="Figure 25"></p>
+<p><img src="../Images/Part15/figure_26_xxd_on_rb1.png" alt="Figure 26"></p>
+<p><img src="../Images/Part15/figure_27_format_on_rb3.png" alt="Figure 27"></p>
+<h2 id="now-lets-learn-the-rules">Now, let&#x2019;s learn the rules</h2>
+<p>We have just now played around with the disk on RAM but without actually knowing the rules, i.e. the internal details of the game. So, let&#x2019;s dig into the nitty-gritties to decode the rules. Each of the three .c files represent a specific part of the driver. ram_device.c and ram_device.h abstract the underlying RAM operations like vmalloc/vfree, memcpy, etc, providing disk operation APIs like init/cleanup, read/write, etc. partition.c and partition.h provide the functionality to emulate the various partition tables on the disk on RAM. Recall the pre-lunch session (i.e. the previous article) to understand the details of partitioning. The code in this is responsible for the partition information like number, type, size, etc that is shown up on the disk on RAM using fdisk. ram_block.c is the core block driver implementation exposing the disk on RAM as the block device files (/dev/rb<em>) to the user-space. In other words, the four files ram_device.</em> and partition.* form the horizontal layer of the device driver and ram_block.c forms the vertical (block) layer of the device driver. So, let&#x2019;s understand that in detail.</p>
+<h3 id="the-block-driver-basics">The block driver basics</h3>
+<p>Conceptually, the block drivers are very similar to character drivers, especially with regards to the following:</p>
+<ul>
+<li>Usage of device files</li>
+<li>Major and minor numbers</li>
+<li>Device file operations</li>
+<li>Concept of device registration</li>
+</ul>
+<p>So, if one already knows character driver implementations, it would be similar to understand the block drivers. Though, they are definitely not identical. The key differences could be listed out as follows:</p>
+<ul>
+<li>Abstraction for block-oriented versus byte-oriented devices</li>
+<li>Block drivers are designed to be used by I/O schedulers, for optimal performance. Compare that with character drivers to be used by VFS.</li>
+<li>Block drivers are designed to be integrated with the Linux&#x2019; buffer cache mechanism for efficient data access. Character drivers are pass-through drivers, accessing the hardware directly.</li>
+</ul>
+<p>And these trigger the implementation differences. Let&#x2019;s analyze the key code snippets from <code>ram_block.c</code>, starting at the driver&#x2019;s constructor <code>rb_init()</code>.</p>
+<p>First step is to register for a 8-bit (block) major number. And registering for that implicitly means registering for all the 256 8-bit minor numbers associated with that. The function for that is:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">register_blkdev</span><span class="hljs-params">(<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> major, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> *name)</span></span>;
+</code></pre>
+<p><code>major</code> is the major number to be registered. name is a registration label displayed under the kernel window <code>/proc/</code>devices. Interestingly, <code>register_blkdev()</code> tries to allocate &amp; register a freely available major number, when 0 is passed for its first parameter major; and on success, the allocated major number is returned. The corresponding deregistration function is:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">unregister_blkdev</span><span class="hljs-params">(<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> major, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> *name)</span></span>;
+</code></pre>
+<p>Both are prototyped in <code>&lt;linux/fs.h&gt;</code></p>
+<p>Second step is to provide the device file operations, through the struct block_device_operations (prototyped in <code>&lt;linux/blkdev.h&gt;</code>) for the registered major number device files. However, these operations are too few compared to the character device file operations, and mostly insignificant. To elaborate, there are no operations even to read and write. That&#x2019;s surprising. But as we already know that the block drivers need to integrate with the I/O schedulers, the read-write implementation is achieved through something called request queues. So, along with providing the device file operations, the following needs to provided:</p>
+<ul>
+<li>Request queue for queuing the read/write requests</li>
+<li>Spin lock associated with the request queue for its concurrent access protection</li>
+<li>Request function to process the requests queued in the request queue</li>
+</ul>
+<p>Also, there is no separate interface for block device file creations, so the following are also provided:</p>
+<ul>
+<li>Device file name prefix, commonly referred as disk_name (&#x201C;rb&#x201D; in the dor driver)</li>
+<li>Starting minor number for the device files, commonly referred as the first_minor</li>
+</ul>
+<p>Finally, two block device-specific things are also provided along with the above, namely:</p>
+<ul>
+<li>Maximum number of partitions supported for this block device, by specifying the total minors</li>
+<li>Underlying device size in units of 512-byte sectors, for the logical block access abstraction</li>
+</ul>
+<p>All these are registered through the <code>struct gendisk</code> using the function:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">add_disk</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> gendisk *disk)</span></span>;
+</code></pre>
+<p>The corresponding delete function is:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">del_gendisk</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> gendisk *disk)</span></span>;
+</code></pre>
+<p>Prior to <code>add_disk()</code>, the various fields of struct gendisk need to be initialized, either directly or using various macros/functions like <code>set_capacity()</code>. major, first_minor, fops, queue, disk_name are the minimal fields to be initialized directly. And even before the initialization of these fields, the struct gendisk needs to be allocated using the function:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">struct</span> gendisk *<span class="hljs-title">alloc_disk</span><span class="hljs-params">(<span class="hljs-keyword">int</span> minors)</span></span>;
+</code></pre>
+<p>where minors is the total number of partitions supported for this disk. And the corresponding inverse function would be:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">put_disk</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> gendisk *disk)</span></span>;
+</code></pre>
+<p>All these are prototyped in <code>&lt;linux/genhd.h&gt;</code>.</p>
+<h2 id="request-queue-and-its-request-processing-function">Request queue and its request processing function</h2>
+<p>The request queue also needs to be initialized and set up into the <code>struct gendisk</code>, before the <code>add_disk()</code>. The request queue is initialized by calling:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">struct</span> request_queue *<span class="hljs-title">blk_init_queue</span><span class="hljs-params">(request_fn_proc *, spinlock_t *)</span></span>;
+</code></pre>
+<p>providing the request processing function and the initialized concurrency protection spinlock, as its parameters. The corresponding queue cleanup function is:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">blk_cleanup_queue</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> request_queue *)</span></span>;
+</code></pre>
+<p>The request (processing) function should be defined with the following prototype:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">request_fn</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> request_queue *q)</span></span>;
+</code></pre>
+<p>And it should be coded to fetch a request from its parameter q, say using</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">struct</span> request *<span class="hljs-title">blk_fetch_request</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> request_queue *q)</span></span>;
+</code></pre>
+<p>and then either process it or initiate the processing. Whatever it does, it should be non-blocking, as this request function is called from a non-process context, and also after taking the queue&#x2019;s spinlock. So, moreover only the functions not releasing or taking the queue&#x2019;s spinlock should be used within the request function.</p>
+<p>A typical request processing as demonstrated by the function <code>rb_request()</code> in <code>ram_block.c</code> is:</p>
+<pre><code class="lang-C"><span class="hljs-keyword">while</span> ((req = blk_fetch_request(q)) != <span class="hljs-literal">NULL</span>) <span class="hljs-comment">/* Fetching a request */</span>
+{
+    <span class="hljs-comment">/* Processing the request: the actual data transfer */</span>
+    ret = rb_transfer(req); <span class="hljs-comment">/* Our custom function */</span>
+    <span class="hljs-comment">/* Informing that the request has been processed with return of ret */</span>
+    __blk_end_request_all(req, ret);
+}
+</code></pre>
+<h2 id="request-and-its-processing">Request and its processing</h2>
+<p><code>rb_transfer()</code> is our key function, which parses a struct request and accordingly does the actual data transfer. The struct request mainly contains the direction of data transfer, starting sector for the data transfer, total number of sectors for the data transfer, and the scatter-gather buffer for data transfer. The various macros to extract these information from the struct request are as follows:</p>
+<pre><code class="lang-C">rq_data_dir(req); <span class="hljs-comment">/* Operation: 0 - read from device; otherwise - write to device */</span>
+blk_req_pos(req); <span class="hljs-comment">/* Starting sector to process */</span>
+blk_req_sectors(req); <span class="hljs-comment">/* Total sectors to process */</span>
+rq_for_each_segment(bv, req, iter) <span class="hljs-comment">/* Iterator to extract individual buffers */</span>
+</code></pre>
+<p><code>rq_for_each_segment()</code> is the special one which iterates over the struct request (req) using iter, and extracting the individual buffer information into the <code>struct bio_vec</code> (bv: basic input/output vector) on each iteration. And, then on each extraction, the appropriate data transfer is done, based on the operation type, invoking one of the following APIs from <code>ram_device.c</code>:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">ramdevice_write</span><span class="hljs-params">(sector_t sector_off, u8 *buffer, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> sectors)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">ramdevice_read</span><span class="hljs-params">(sector_t sector_off, u8 *buffer, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> sectors)</span></span>;
+</code></pre>
+<p>Check out the complete code of rb_transfer() in ram_block.c</p>
+<h2 id="summing-up">Summing up</h2>
+<p>&#x201C;With that, we have actually learnt the beautiful block drivers by traversing through the design of a hard disk, and playing around with partitioning, formatting, and various other raw operations on a hard disk. Thanks for your patient listening. Now, the session is open for questions. Or, you may post your queries as comments, below.&#x201D;</p>
+
                     
                     </section>
                 

@@ -53,7 +53,7 @@
         data-chapter-title="The Semester Project - IV: FS Formatting a Pen Drive"
         data-filepath="Content/Part21.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,79 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="the-semester-project-&#x2013;-part-iv-formatting-a-pen-drive">The Semester Project &#x2013; Part IV: Formatting a Pen Drive</h1>
+<blockquote>
+<p>This twenty-first article, which is part of the series on Linux device drivers, takes the next step towards writing a file system module by writing a formatting application for your real pen drive.</p>
+</blockquote>
+<p>Thanks friends for your confidence in Shweta and not trying to help her out in figuring out the issues with her code. She indeed figured out and fixed the following issues in her code:</p>
+<ul>
+<li>sfs_read() and sfs_write() need to check for the read and write file permissions before proceeding to read and write, respectively</li>
+<li>sfs_write() should free any previously allocated blocks, as write is always over-write</li>
+<li>Moreover, the earlier written sfs_remove() also, now needs to free up the allocated blocks.</li>
+</ul>
+<h2 id="sfs-format-for-a-real-partition">SFS Format for a real partition</h2>
+<p>There after Pugs took the lead and slightly modified Shweta&#x2019;s <code>format_sfs.c</code> and <code>sfs_ds.h</code> files to format a real pen drive&#x2019;s partition. The key change is that instead of creating the default regular file .sfsf to format, now it would be operating on an existing block device file corresponding to an underlying partition, say something like <code>/dev/sdb1</code>. So,</p>
+<ul>
+<li>It would get the partition&#x2019;s size from the partition&#x2019;s block device file itself, rather than taking it as a command-line argument.</li>
+<li>Accordingly, it would now expect the partition&#x2019;s block device file name instead of size, as main()&#x2018;s first argument.</li>
+<li>Also, it would not need the mark_data_block() to grow the file equal to the partition size.</li>
+</ul>
+<p>The ioctl command <code>BLKGETSIZE64</code> gets the 64-bit size of the underlying block device partition, in bytes. Then, it is divided by the block size (<code>SIMULA_FS_BLOCK_SIZE</code>) to get the partition&#x2019;s size in block units. Here is the corresponding modified snippet of the main() function in format_real_sfs.c (updated <code>format_sfs.c</code>), along with the required typedef in real_sfs_ds.h (updated <code>sfs_ds.h</code>). (Note: For readability, Pugs renamed all uint<em> by byte</em>):</p>
+<pre><code class="lang-C"><span class="hljs-keyword">typedef</span> <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> <span class="hljs-keyword">long</span> <span class="hljs-keyword">byte8_t</span>;
+...
+<span class="hljs-keyword">byte8_t</span> size;
+
+sfs_handle = open(argv[<span class="hljs-number">1</span>], O_RDWR);
+<span class="hljs-keyword">if</span> (sfs_handle == -<span class="hljs-number">1</span>)
+{
+    <span class="hljs-built_in">fprintf</span>(<span class="hljs-built_in">stderr</span>, <span class="hljs-string">&quot;Error formatting %s: %s\n&quot;</span>, argv[<span class="hljs-number">1</span>], strerror(errno));
+    <span class="hljs-keyword">return</span> <span class="hljs-number">2</span>;
+}
+<span class="hljs-keyword">if</span> (ioctl(sfs_handle, BLKGETSIZE64, &amp;size) == -<span class="hljs-number">1</span>)
+{
+    <span class="hljs-built_in">fprintf</span>(<span class="hljs-built_in">stderr</span>, <span class="hljs-string">&quot;Error getting size of %s: %s\n&quot;</span>, argv[<span class="hljs-number">1</span>], strerror(errno));
+    <span class="hljs-keyword">return</span> <span class="hljs-number">3</span>;
+}
+sb.partition_size = size / SIMULA_FS_BLOCK_SIZE;
+</code></pre>
+<p>As per the above code, the following additional header files need to be included:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;errno.h&gt;</span> /* For errno */</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;string.h&gt;</span> /* For strerror() */</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;sys/ioctl.h&gt;</span> /* For ioctl() */</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/fs.h&gt;</span> /* For BLKGETSIZE64 */</span>
+</code></pre>
+<p>With all the above changes compiled into format_real_sfs, Pugs plugged in his pen drive, partition of which got auto mounted. Then, he took backup of its content and unmounted the same &#x2013; ready for a real SFS format of the pen drive partition.</p>
+<blockquote>
+<p><em>Caution: </em> <strong>Take a backup of your pen drive&#x2019;s content &#x2013; you are formatting it for real. Be careful in choosing the right partition of your pen drive. Otherwise, you may forever lose data from your hard disk or even make your system un-bootable. You have been warned.</strong></p>
+</blockquote>
+<p><img src="../Images/Part21/figure_36_formatting_the_pen_drive-1024x549.png" alt="Figure 36"></p>
+<p>Figure 36 demonstrates all the above but backup steps at root prompt #. Instead, one may use sudo, as well. Note that Pugs got his pen drive partition mounted at <code>/media/10AC-BF1C</code>, and the corresponding device file is <code>/dev/sdb</code>1 (/dev/sdb being the complete pen drive). You may have both these differently. Accordingly, follow the steps for yourself. Also, note that, the real SFS formatting is then started using the following command:</p>
+<pre><code class="lang-shell"># ./format_real_sfs /dev/sdb1
+</code></pre>
+<p>And then, there is a ^C (Ctrl-C) immediately after that, basically terminating the formatting. Aha! Did Pugs realize something important was there on the pen drive? Not really, as his pen drive is already empty. Actually, what happened is that formatting was going on for quite some time &#x2013; so Pugs had some doubt about his code changes and so he terminated it. Reviewing his code didn&#x2019;t yield much, so he reissued the formatting, this time with the time command, to figure out exactly how much time is the formatting taking and then may be debug/fix that. And finally! The formatting is complete but after a whopping 430.88 seconds (7+ minutes), yes minutes. time basically shows the real time taken (includes the time when other processes has been running after context switch), time executed in user space, time executed in kernel space. That&#x2019;s huge &#x2013; something needs optimization. And it didn&#x2019;t take much time for a close review to undermine the issue. The key time taker code would be the <code>clear_file_entries()</code> function. Right now its clearing the file entries one by one, i.e. writing 64-byte sized file entries one by one &#x2013; that&#x2019;s pretty non-optimal. A better approach would be to fill up a block with such entries, and then write these blocks one by one. In case of a 512-byte block (i.e. SIMULA_FS_BLOCK_SIZE defined as 512), that would mean 8 file entries in a 512-byte block and then writing these 512-byte blocks one by one. So, Pugs changed the <code>clear_file_entries()</code> function to do the same, and viola! formatting is complete in a little less than 26 seconds. Here&#x2019;s the answer to your curiosity &#x2013; the re-written <code>clear_file_entries()</code> function:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">clear_file_entries</span><span class="hljs-params">(<span class="hljs-keyword">int</span> sfs_handle, sfs_super_block_t *sb)</span>
+</span>{
+    <span class="hljs-keyword">int</span> i;
+    <span class="hljs-keyword">byte1_t</span> block[SIMULA_FS_BLOCK_SIZE];
+
+    <span class="hljs-keyword">for</span> (i = <span class="hljs-number">0</span>; i &lt; sb-&gt;block_size / sb-&gt;entry_size; i++)
+    {
+        <span class="hljs-built_in">memcpy</span>(block + i * sb-&gt;entry_size, &amp;fe, <span class="hljs-keyword">sizeof</span>(fe));
+    }
+    <span class="hljs-keyword">for</span> (i = <span class="hljs-number">0</span>; i &lt; sb-&gt;entry_table_size; i++)
+    {
+        write(sfs_handle, block, <span class="hljs-keyword">sizeof</span>(block));
+    }
+}
+</code></pre>
+<p>Now, you may plug out and plug in the pen drive back. And you may wonder that neither it is auto-mounted, nor you are able to mount it. That&#x2019;s expected, as now it is formatted with a file system which is not yet coded as (kernel) module and there is no one in the kernel to decode the same. So, coding that kernel module would be the ultimate step to get everything working like with any other existing file systems (vfat, ext3, &#x2026;). If you are worried that your pen drive is spoiled, you may re-format it with the FAT32 (vfat) file system as follows (as root or with sudo):</p>
+<pre><code># mkfs.vfat /dev/sdb1 # Be careful with the correct partition device file
+</code></pre><p>and then plug out &amp; plug in the pen drive to get auto-mounted. But, you know Pugs being a cool carefree guy, instead went ahead to try out browsing the Simula file system created on the pen drive partition.</p>
+<h2 id="browsing-the-pen-drive-partition">Browsing the pen drive partition</h2>
+<p>Obviously, there were slight modifications to the browse_sfs.c application as well, in line with the changes to format_sfs.c. Major one being compulsorily taking the partition&#x2019;s device file to browse as the command-line argument, instead of browsing the default regular file .sfsf.</p>
+<p>All the updated files (<code>real_sfs_ds.h</code>, <code>format_real_sfs.c</code>, <code>browse_real_sfs.c</code> and <code>Makefile</code>) are available from <a href="http://sysplay.in/blog/code/rsfs_code.tar.bz2" target="_blank">rsfs_code.tar.bz2</a>.</p>
+<p>Figure 37 shows the browser in action. However, the coolest browsing would be the same way as is done with all other file systems, using the shell commands cd, ls, &#x2026; Yes, and for that we would need the real SFS module in place. Keep following what&#x2019;s Pugs upto for getting that in place.</p>
+
                     
                     </section>
                 

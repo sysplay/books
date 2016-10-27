@@ -53,7 +53,7 @@
         data-chapter-title="USB Drivers in Linux Continued"
         data-filepath="Content/Part12.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,159 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="usb-drivers-in-linux-continued">USB Drivers in Linux (Continued)</h1>
+<blockquote>
+<p>This twelfth article, which is part of the series on Linux device drivers, gets you further with writing your first USB driver in Linux &#x2013; a continuation from the previous article.</p>
+</blockquote>
+<p>Pugs continued, &#x201C;Let&#x2019;s build upon the USB device driver coded in our previous session, using the same handy JetFlash pen drive from Transcend with vendor id 0x058f and product id 0x6387. For that, we would dig further into the USB protocol and then convert the learning into code.&#x201D;</p>
+<h2 id="usb-endpoints-and-their-types">USB endpoints and their types</h2>
+<p>Depending on the type and attributes of information to be transferred, a USB device may have one or more endpoints, each belonging to one of the following four categories:</p>
+<ul>
+<li>Control &#x2013; For transferring control information. Examples include resetting the device, querying information about the device, etc. All USB devices always have the default control endpoint point zero.</li>
+<li>Interrupt &#x2013; For small and fast data transfer, typically of up to 8 bytes. Examples include data transfer for serial ports, human interface devices (HIDs) like keyboard, mouse, etc.</li>
+<li>Bulk &#x2013; For big but comparatively slow data transfer. A typical example is data transfers for mass storage devices.</li>
+<li>Isochronous &#x2013; For big data transfer with bandwidth guarantee, though data integrity may not be guaranteed. Typical practical usage examples include transfers of time-sensitive data like of audio, video, etc.</li>
+</ul>
+<p>Additionally, all but control endpoints could be &#x201C;in&#x201D; or &#x201C;out&#x201D;, indicating its direction of data transfer. &#x201C;in&#x201D; indicates data flow from USB device to the host machine and &#x201C;out&#x201D; indicates data flow from the host machine to USB device. Technically, an endpoint is identified using a 8-bit number, most significant bit (MSB) of which indicates the direction &#x2013; 0 meaning out, and 1 meaning in. Control endpoints are bi-directional and the MSB is ignored.</p>
+<p><img src="../Images/Part12/figure_19_usb_proc_window_snippet.png" alt="Figure 19"></p>
+<p>Figure 19 shows a typical snippet of USB device specifications for devices connected on a system. To be specific, the &#x201C;E: &#x201D; lines in the figure shows example of an interrupt endpoint of a UHCI Host Controller and two bulk endpoints of the pen drive under consideration. Also, the endpoint numbers (in hex) are respectively 0x81, 0x01, 0x82. The MSB of the first and third being 1 indicating &#x201C;in&#x201D; endpoints, represented by &#x201C;(I)&#x201D; in the figure. Second one is an &#x201C;(O)&#x201D; for the &#x201C;out&#x201D; endpoint. &#x201C;MaxPS&#x201D; specifies the maximum packet size, i.e. the data size that can be transferred in a single go. Again as expected, for the interrupt endpoint it is 2 (&lt;= 8), and 64 for the bulk endpoints. &#x201C;Ivl&#x201D; specifies the interval in milliseconds to be given between two consecutive data packet transfers for proper transfer and is more significant for the interrupt endpoints.</p>
+<h2 id="decoding-a-usb-device-section">Decoding a USB device section</h2>
+<p>As we have just discussed the &#x201C;E: &#x201D; line, it is right time to decode the relevant fields of others as well. In short, these lines in a USB device section gives the complete overview of the USB device as per the USB specifications, as discussed in our previous article. Refer back to Figure 19. The first letter of the first line of every device section is a &#x201C;T&#x201D; indicating the position of the device in the USB tree, uniquely identified by the triplet <code>&lt;usb bus number, usb tree level, usb port&gt;</code>. &#x201C;D&#x201D; represents the device descriptor containing at least the device version, device class/category, and the number of configurations available for this device. There would be as many &#x201C;C&#x201D; lines as the number of configurations, typically one. &#x201C;C&#x201D; represents the configuration descriptor containing its index, device attributes in this configuration, maximum power (actually current) the device would draw in this configuration, and the number of interfaces under this configuration. Depending on that there would be at least that many &#x201C;I&#x201D; lines. There could be more in case of an interface having alternates, i.e. same interface number but with different properties &#x2013; a typical scenario for web-cams.</p>
+<p>&#x201C;I&#x201D; represents the interface descriptor with its index, alternate number, functionality class/category of this interface, driver associated with this interface, and the number of endpoints under this interface. The interface class may or may not be same as that of the device class. And depending on the number of endpoints, there would be as many &#x201C;E&#x201D; lines, details of which have already been discussed above. The &#x201C;*&#x201D; after the &#x201C;C&#x201D; &amp; &#x201C;I&#x201D; represents the currently active configuration and interface, respectively. &#x201C;P&#x201D; line provides the vendor id, product id, and the product revision. &#x201C;S&#x201D; lines are string descriptors showing up some vendor specific descriptive information about the device.</p>
+<p>&#x201C;Peeping into /proc/bus/usb/devices is good to figure out whether a device has been detected or not and possibly to get the first cut overview of the device. But most probably this information would be required in writing the driver for the device as well. So, is there a way to access it using &#x2018;C&#x2019; code?&#x201D;, asked Shweta. &#x201C;Yes definitely, that&#x2019;s what I am going to tell you next. Do you remember that as soon as a USB device is plugged into the system, the USB host controller driver populates its information into the generic USB core layer? To be precise, it puts that into a set of structures embedded into one another, exactly as per the USB specifications&#x201D;, replied Pugs. The following are the exact data structures defined in <code>&lt;linux/usb.h&gt;</code> &#x2013; ordered here in reverse for flow clarity:</p>
+<pre><code class="lang-C"><span class="hljs-keyword">struct</span> usb_device
+{
+    ...
+    <span class="hljs-keyword">struct</span> usb_device_descriptor descriptor;
+    <span class="hljs-keyword">struct</span> usb_host_config *config, *actconfig;
+    ...
+};
+<span class="hljs-keyword">struct</span> usb_host_config
+{
+    <span class="hljs-keyword">struct</span> usb_config_descriptor desc;
+    ...
+    <span class="hljs-keyword">struct</span> usb_interface *interface[USB_MAXINTERFACES];
+    ...
+};
+<span class="hljs-keyword">struct</span> usb_interface
+{
+    <span class="hljs-keyword">struct</span> usb_host_interface *altsetting <span class="hljs-comment">/* array */</span>, *cur_altsetting;
+    ...
+};
+<span class="hljs-keyword">struct</span> usb_host_interface
+{
+    <span class="hljs-keyword">struct</span> usb_interface_descriptor desc;
+    <span class="hljs-keyword">struct</span> usb_host_endpoint *endpoint <span class="hljs-comment">/* array */</span>;
+    ...
+};
+<span class="hljs-keyword">struct</span> usb_host_endpoint
+{
+    <span class="hljs-keyword">struct</span> usb_endpoint_descriptor  desc;
+    ...
+};
+</code></pre>
+<p>So, with access to the <code>struct usb_device</code> handle for a specific device, all the USB specific information about the device can be decoded, as shown through the <code>/proc</code> window. But how to get the device handle? In fact, the device handle is not available directly in a driver, rather the per interface handles (pointers to struct usb_interface) are available, as USB drivers are written for device interfaces rather than the device as a whole. Recall that the probe &amp; disconnect callbacks, which are invoked by USB core for every interface of the registered device, have the corresponding interface handle as their first parameter. Refer the prototypes below:</p>
+<pre><code class="lang-C"><span class="hljs-keyword">int</span> (*probe)(<span class="hljs-keyword">struct</span> usb_interface *interface, <span class="hljs-keyword">const</span> <span class="hljs-keyword">struct</span> usb_device_id *id);
+<span class="hljs-keyword">void</span> (*disconnect)(<span class="hljs-keyword">struct</span> usb_interface *interface);
+</code></pre>
+<p>So with the interface pointer, all information about the corresponding interface can be accessed. And to get the container device handle, the following macro comes to rescue:</p>
+<pre><code class="lang-C"><span class="hljs-keyword">struct</span> usb_device device = interface_to_usbdev(interface);
+</code></pre>
+<p>Adding these new learning into the last month&#x2019;s registration only driver, gets the following code listing (<code>pen_info.c</code>):</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/module.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/kernel.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/usb.h&gt;</span></span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> usb_device *device;
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">pen_probe</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> usb_interface *interface, <span class="hljs-keyword">const</span> <span class="hljs-keyword">struct</span> usb_device_id *id)</span>
+</span>{
+    <span class="hljs-keyword">struct</span> usb_host_interface *iface_desc;
+    <span class="hljs-keyword">struct</span> usb_endpoint_descriptor *endpoint;
+    <span class="hljs-keyword">int</span> i;
+
+    iface_desc = interface-&gt;cur_altsetting;
+    printk(KERN_INFO <span class="hljs-string">&quot;Pen i/f %d now probed: (%04X:%04X)\n&quot;</span>,
+            iface_desc-&gt;desc.bInterfaceNumber,
+            id-&gt;idVendor, id-&gt;idProduct);
+    printk(KERN_INFO <span class="hljs-string">&quot;ID-&gt;bNumEndpoints: %02X\n&quot;</span>,
+            iface_desc-&gt;desc.bNumEndpoints);
+    printk(KERN_INFO <span class="hljs-string">&quot;ID-&gt;bInterfaceClass: %02X\n&quot;</span>,
+            iface_desc-&gt;desc.bInterfaceClass);
+
+    <span class="hljs-keyword">for</span> (i = <span class="hljs-number">0</span>; i &lt; iface_desc-&gt;desc.bNumEndpoints; i++)
+    {
+        endpoint = &amp;iface_desc-&gt;endpoint[i].desc;
+
+        printk(KERN_INFO <span class="hljs-string">&quot;ED[%d]-&gt;bEndpointAddress: 0x%02X\n&quot;</span>,
+                i, endpoint-&gt;bEndpointAddress);
+        printk(KERN_INFO <span class="hljs-string">&quot;ED[%d]-&gt;bmAttributes: 0x%02X\n&quot;</span>,
+                i, endpoint-&gt;bmAttributes);
+        printk(KERN_INFO <span class="hljs-string">&quot;ED[%d]-&gt;wMaxPacketSize: 0x%04X (%d)\n&quot;</span>,
+                i, endpoint-&gt;wMaxPacketSize,
+                endpoint-&gt;wMaxPacketSize);
+    }
+
+    device = interface_to_usbdev(interface);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">pen_disconnect</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> usb_interface *interface)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Pen i/f %d now disconnected\n&quot;</span>,
+            interface-&gt;cur_altsetting-&gt;desc.bInterfaceNumber);
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> usb_device_id pen_table[] =
+{
+    { USB_DEVICE(<span class="hljs-number">0x058F</span>, <span class="hljs-number">0x6387</span>) },
+    {} <span class="hljs-comment">/* Terminating entry */</span>
+};
+MODULE_DEVICE_TABLE (usb, pen_table);
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> usb_driver pen_driver =
+{
+    .name = <span class="hljs-string">&quot;pen_info&quot;</span>,
+    .probe = pen_probe,
+    .disconnect = pen_disconnect,
+    .id_table = pen_table,
+};
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> __<span class="hljs-function">init <span class="hljs-title">pen_init</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span>
+</span>{
+    <span class="hljs-keyword">return</span> usb_register(&amp;pen_driver);
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> __<span class="hljs-function"><span class="hljs-built_in">exit</span> <span class="hljs-title">pen_exit</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span>
+</span>{
+    usb_deregister(&amp;pen_driver);
+}
+
+module_init(pen_init);
+module_exit(pen_exit);
+
+MODULE_LICENSE(<span class="hljs-string">&quot;GPL&quot;</span>);
+MODULE_AUTHOR(<span class="hljs-string">&quot;Anil Kumar Pugalia &lt;email@sarika-pugs.com&gt;&quot;</span>);
+MODULE_DESCRIPTION(<span class="hljs-string">&quot;USB Pen Info Driver&quot;</span>);
+</code></pre>
+<p>Then, the usual steps for any Linux device driver may be repeated, along with the pen drive steps:</p>
+<ul>
+<li>Build the driver (pen_info.ko file) by running make.</li>
+<li>Load the driver using insmod pen_info.ko.</li>
+<li>Plug-in the pen drive (after making sure that usb-storage driver is not already loaded).</li>
+<li>Unplug-out the pen drive.</li>
+<li>Check the output of dmesg for the logs.</li>
+<li>Unload the driver using rmmod pen_info.</li>
+</ul>
+<p>Figure 22 shows a snippet of the above steps on Pugs&#x2019; system. Remember to ensure (in the output of <code>cat /proc/bus/usb/devices</code>) that the usual usb-storage driver is not the one associated with the pen drive interface, rather it should be the pen_info driver.</p>
+<p><img src="../Images/Part12/figure_22_dmesg_log.png" alt="Figure 22"></p>
+<h2 id="summing-up">Summing up</h2>
+<p>Before taking another break, Pugs shared two of the many mechanisms for a driver to specify its device to the USB core, using the struct usb_device_id table. First one is by specifying the <code>&lt;vendor id, product id&gt;</code> pair using the <code>USB_DEVICE()</code> macro (as done above), and the second one is by specifying the device class/category using the <code>USB_DEVICE_INFO()</code> macro. In fact, many more macros are available in <code>&lt;linux/usb.h&gt;</code> for various combinations. Moreover, multiple of these macros could be specified in the usb_device_id table (terminated by a null entry), for matching with any one of the criteria, enabling to write a single driver for possibly many devices.</p>
+<p>&#x201C;Earlier you mentioned writing multiple drivers for a single device, as well. Basically, how do we selectively register or not register a particular interface of a USB device?&#x201D;, queried Shweta. &#x201C;Sure. That&#x2019;s next in line of our discussion, along with the ultimate task in any device driver &#x2013; the data transfer mechanisms&#x201D; replied Pugs.</p>
+<h2 id="notes">Notes</h2>
+<p>Make sure that you replace the <code>vendor id</code> &amp; <code>device id</code> in the above code examples by the ones of your pen drive. One may wonder, as how does the usb-storage get autoloaded. The answer lies in the module autoload rules written down in the file <code>/lib/modules/&lt;kernel_version&gt;/modules.usbmap</code>. If you are an expert, you may comment out the corresponding line, for it to not get autoloaded. And uncomment it back, once you are done with your experiments.</p>
+<p>In latest distros, you may not find the detailed description of the USB devices using <code>cat /proc/bus/usb/devices</code>, as the <code>/proc/bus/usb/</code> itself has been deprecated. You can find the same detailed info using <code>cat /sys/kernel/debug/usb/devices</code> &#x2013; though you may need root permissions for the same. Also, if you do not see any file under <code>/sys/kernel/debug</code> (even as root), then you may have to first mount the debug filesystem, as follows: <code>mount -t debugfs none /sys/kernel/debug</code></p>
+
                     
                     </section>
                 

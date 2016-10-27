@@ -51,7 +51,7 @@
         data-chapter-title="The Semester Project - VII: The File System in Action"
         data-filepath="Content/Part24.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -473,7 +473,159 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="the-semester-project-&#x2013;-part-vii-file-system-in-action">The Semester Project &#x2013; Part VII: File System in Action</h1>
+<blockquote>
+<p>This twenty-fourth article, which is part of the series on Linux device drivers, gets the complete real SIMULA file system module in action, with a real hardware partition on your pen drive.</p>
+</blockquote>
+<h2 id="real-sfs-in-action">Real SFS in action</h2>
+<p>Code available from <a href="http://sysplay.in/blog/code/rsfs_in_action_code.tbz2" target="_blank">rsfs_in_action_code.tbz2</a> gets to the final tested implementation of the final semester project of Pugs &amp; Shweta. This contains the following:</p>
+<ul>
+<li><code>real_sfs.c</code> &#x2013; contains the code of earlier real_sfs_minimal.c plus the remaining real SIMULA file system functionalities. Note the file system&#x2019;s name change from sfs to real_sfs</li>
+<li><code>real_sfs_ops.c</code> &amp; <code>real_sfs_ops.h</code> &#x2013; contains the earlier code plus the additional operations needed for the enhanced <code>real_sfs.c</code> implementations</li>
+<li><code>real_sfs_ds.h</code> (almost same file as in the previous article, plus a spin lock added into the real SFS info structure to be used for preventing race conditions in accessing the used_blocks array in the same structure)</li>
+<li><code>format_real_sfs.c</code> (same file as in the previous articles) &#x2013; the real SFS formatter application</li>
+<li>Makefile &#x2013; contains the rules for building the driver real<em>sfs_final.ko using the `real_sfs</em><em>.</em><code>files, and the</code>format_real_sfs<code>application using the</code>format_real_sfs.c`</li>
+</ul>
+<p>With all these and earlier details, Shweta completed their project documentation. And so finally, Shweta &amp; Pugs were all set for their final semester project demo, presentation and viva.</p>
+<p>The highlights of their demo (on root shell) are as follows:</p>
+<ul>
+<li>Loading <code>real_sfs_final</code> driver: <code>insmod real_sfs_final.ko</code></li>
+<li>Using the previously formatted pen drive partition /dev/sdb1 or Re-formatting it using the format_real_sfs application: <code>./format_real_sfs /dev/sdb1</code>. <em>Caution: Please check out the complete detailed steps on this from the previous article, before you actually format it</em></li>
+<li>Mount the real SFS formatted partition: <code>mount -t real_sfs /dev/sdb1 /mnt</code></li>
+<li>And &#x2026; And what? Browse the mounting filesystem. Use your usual shell commands to operate on the file system: ls, cd, touch, vi, rm, chmod, &#x2026;</li>
+</ul>
+<p>Figure 40 shows the real SIMULA file system in action</p>
+<p><img src="../Images/Part24/figure_40_sfs_module_in_action_hi_res.png" alt="Figure 40"></p>
+<h2 id="realities-behind-the-action">Realities behind the action</h2>
+<p>And if you really want to know, what are the additional enhancements Pugs added to the previous article&#x2019;s code to get to this level, it is basically the following core system calls as part of the remaining 4 out of 5 set of structures of function pointers (in real_sfs.c):</p>
+<ol>
+<li><p>write_inode (under struct super_operations) &#x2013; sfs_write_inode() basically gets a pointer to an inode in the VFS&#x2019; inode cache, and is expected to sync that with the inode in physical hardware space file system. That is achieved by calling the appropriately modified sfs_update() (defined in real_sfs_ops.c) (adapted from the earlier browse_real_sfs application). The key parameter changes being passing the inode number instead of the filename and the actual timestamp instead of the flag for its update status. And accordingly, the call to filename based sfs_lookup() is being replaced by inode number based sfs_get_file_entry() (defined in real_sfs_ops.c), and additionally now the data blocks are also being freed (using sfs_put_data_block() (defined in real_sfs_ops.c)), if the file size has reduced. Note that sfs_put_data_block() (defined in real_sfs_ops.c) is a transformation of the put_data_block() from the browse_real_sfs application. Also, note the interesting mapping to / from the VFS inode number from / to our zero-based file entry indices, using the macros S2V_INODE_NUM() / V2S_INODE_NUM() in real_sfs_ops.h.
+And finally, underlying write is being achieved using write_to_real_sfs(), a function added in real_sfs_ops.c, very similar to read_from_real_sfs() (already there in real_sfs_ops.c), except the direction reversal of the data transfer and marking the buffer dirty to be synced up with the physical content. Alongwith, in real_sfs_ops.c, two wrapper functions read_entry_from_real_sfs() (using read_from_real_sfs()) and write_entry_to_real_sfs() (using write_to_real_sfs()) have been written and used respectively for the specific requirements of reading and writing the file entries, to increase the code readability. sfs_write_inode() and sfs_update() are shown in the code snippet below. sfs_write_inode() has been written in the file real_sfs.c. For others, check out the file real_sfs_ops.c</p>
+<pre><code class="lang-C"> <span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">2</span>,<span class="hljs-number">6</span>,<span class="hljs-number">34</span>))</span>
+ <span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">sfs_write_inode</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *inode, <span class="hljs-keyword">int</span> do_sync)</span>
+ <span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+ <span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">sfs_write_inode</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *inode, <span class="hljs-keyword">struct</span> writeback_control *wbc)</span>
+ <span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+ </span>{
+     <span class="hljs-keyword">sfs_info_t</span> *info = (<span class="hljs-keyword">sfs_info_t</span> *)(inode-&gt;i_sb-&gt;s_fs_info);
+     <span class="hljs-keyword">int</span> size, timestamp, perms;
+
+     printk(KERN_INFO <span class="hljs-string">&quot;sfs: sfs_write_inode (i_ino = %ld)\n&quot;</span>, inode-&gt;i_ino);
+
+     <span class="hljs-keyword">if</span> (!(S_ISREG(inode-&gt;i_mode))) <span class="hljs-comment">// Real SFS deals only with regular files</span>
+         <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+
+     size = i_size_read(inode);
+     timestamp = inode-&gt;i_mtime.tv_sec &gt; inode-&gt;i_ctime.tv_sec ?
+             inode-&gt;i_mtime.tv_sec : inode-&gt;i_ctime.tv_sec;
+     perms = <span class="hljs-number">0</span>;
+     perms |= (inode-&gt;i_mode &amp; (S_IRUSR | S_IRGRP | S_IROTH)) ? <span class="hljs-number">4</span> : <span class="hljs-number">0</span>;
+     perms |= (inode-&gt;i_mode &amp; (S_IWUSR | S_IWGRP | S_IWOTH)) ? <span class="hljs-number">2</span> : <span class="hljs-number">0</span>;
+     perms |= (inode-&gt;i_mode &amp; (S_IXUSR | S_IXGRP | S_IXOTH)) ? <span class="hljs-number">1</span> : <span class="hljs-number">0</span>;
+
+     printk(KERN_INFO <span class="hljs-string">&quot;sfs: sfs_write_inode with %d bytes @ %d secs w/ %o\n&quot;</span>,
+         size, timestamp, perms);
+
+     <span class="hljs-keyword">return</span> sfs_update(info, inode-&gt;i_ino, &amp;size, &amp;timestamp, &amp;perms);
+ }
+
+ <span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">sfs_update</span><span class="hljs-params">(sfs_info_t *info, <span class="hljs-keyword">int</span> vfs_ino, <span class="hljs-keyword">int</span> *size, <span class="hljs-keyword">int</span> *timestamp, <span class="hljs-keyword">int</span> *perms)</span>
+ </span>{
+     <span class="hljs-keyword">sfs_file_entry_t</span> fe; 
+     <span class="hljs-keyword">int</span> i;
+     <span class="hljs-keyword">int</span> retval;
+
+     <span class="hljs-keyword">if</span> ((retval = sfs_get_file_entry(info, vfs_ino, &amp;fe)) &lt; <span class="hljs-number">0</span>) 
+     {   
+         <span class="hljs-keyword">return</span> retval; 
+     }   
+     <span class="hljs-keyword">if</span> (size) fe.size = *size;
+     <span class="hljs-keyword">if</span> (timestamp) fe.timestamp = *timestamp;
+     <span class="hljs-keyword">if</span> (perms &amp;&amp; (*perms &lt;= <span class="hljs-number">07</span>)) fe.perms = *perms;
+
+     <span class="hljs-keyword">for</span> (i = (fe.size + info-&gt;sb.block_size - <span class="hljs-number">1</span>) / info-&gt;sb.block_size;
+         i &lt; SIMULA_FS_DATA_BLOCK_CNT; i++)
+     {   
+         <span class="hljs-keyword">if</span> (fe.blocks[i])
+         {   
+             sfs_put_data_block(info, fe.blocks[i]);
+             fe.blocks[i] = <span class="hljs-number">0</span>;
+         }   
+     }   
+
+     <span class="hljs-keyword">return</span> write_entry_to_real_sfs(info, V2S_INODE_NUM(vfs_ino), &amp;fe);
+ }
+</code></pre>
+</li>
+<li><p>create, unlink, lookup (under struct inode_operations) &#x2013; All the 3 functions sfs_inode_create(), sfs_inode_unlink(), sfs_inode_lookup() have the 2 common parameters (the parent&#x2019;s inode pointer and the pointer to the directory entry for the file in consideration), and these respectively create, delete, and lookup an inode corresponding to their directory entry pointed by their parameter, say dentry.
+sfs_inode_lookup() basically searches for the existence of the filename underneath using the appropriately modified sfs_lookup() (defined in real_sfs_ops.c) (adapted from the earlier browse_real_sfs application &#x2013; the adoption being replacing the user space lseek()+read() combo by the read_entry_from_real_sfs()). If filename is not found, then it invokes the generic kernel function d_splice_alias() to create a new inode entry in the underlying file system, for the same, and then attaches it to the directory entry pointed by dentry. Otherwise, it just attaches the inode from VFS&#x2019; inode cache (using generic kernel function d_add()). This inode, if obtained fresh (I_NEW), needs to be filled in with the real SFS looked up file attributes. In all the above implementations and in those to come, a few basic assumptions have been made, namely:</p>
+<ul>
+<li>Real SFS maintains mode only for user and that is mapped to all 3 of user, group, other of the VFS inode</li>
+<li>Real SFS maintains only one timestamp and that is mapped to all 3 of created, modified, accessed times of the VFS inode.
+sfs_inode_create() and sfs_inode_unlink() correspondingly invokes the transformed sfs_create() and sfs_remove() (defined in real_sfs_ops.c) (adapted from the earlier browse_real_sfs application), for respectively creating and clearing the inode entries at the underlying hardware space file system, apart from the usual inode cache operations, using new_inode()+insert_inode_locked(), d_instantiate() &amp; inode_dec_link_count(), instead of the earlier learnt iget_locked(), d_add(). Apart from the permissions and file entry parameters, and replacing lseek()+read() combo by read_entry_from_real_sfs(), sfs_create() has an interesting transformation from user space to kernel space: time(NULL) to get_seconds(). And in both of sfs_create() and sfs_remove() the user space lseek()+write() combo has been replaced by the obvious write_entry_to_real_sfs(). Check out all the above mentioned code pieces in the files real_sfs.c and real_sfs_ops.c, as mentioned.</li>
+</ul>
+</li>
+<li><p>readpage, write_begin, writepage, write_end (under struct address_space_operations) &#x2013; All these address space operations are basically to read and write blocks on the underlying filesystem, and are achieved using the respective generic kernel functions mpage_readpage(), block_write_begin(), block_write_full_page(), generic_write_end(). First one is prototyped in <linux mpage.h=""> and remaining 3 in <linux buffer_head.h="">. Now, though these functions are generic enough, a little thought would show that the first three of these would ultimately have to do a real SFS specific transaction with the underlying block device (the hardware partition), using the corresponding block layer APIs. And that exactly is achieved by the real SFS specific function sfs_get_block(), which is being passed into and used by the first three functions, mentioned above.
+sfs_get_block() (defined in real_sfs.c) is invoked to read a particular block number (iblock) of a file (denoted by an inode), into a buffer head (bh_result), optionally fetching (allocating) a new block. So for that, the block array of corresponding real SFS inode is looked up into and then the corresponding block of the physical partition is fetched using the kernel API map_bh(). Again note that to fetch a new block, we invoke the sfs_get_data_block() (defined in real_sfs_ops.c), which is again a transformation of the get_data_block() from the browse_real_sfs application. Also, in case of a new block allocation, the real SFS inode is also updated underneath, using sfs_update_file_entry() &#x2013; a one liner implementation in real_sfs_ops.c. Code snippet below shows the sfs_get_block() implementation.</linux></linux></p>
+<pre><code class="lang-C"> <span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">sfs_get_block</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *inode, sector_t iblock,
+             <span class="hljs-keyword">struct</span> buffer_head *bh_result, <span class="hljs-keyword">int</span> create)</span>
+ </span>{
+     <span class="hljs-keyword">struct</span> super_block *sb = inode-&gt;i_sb;
+     <span class="hljs-keyword">sfs_info_t</span> *info = (<span class="hljs-keyword">sfs_info_t</span> *)(sb-&gt;s_fs_info);
+     <span class="hljs-keyword">sfs_file_entry_t</span> fe;
+     <span class="hljs-keyword">sector_t</span> phys;
+     <span class="hljs-keyword">int</span> retval;
+
+     printk(KERN_INFO <span class="hljs-string">&quot;sfs: sfs_get_block called for I: %ld, B: %llu, C: %d\n&quot;</span>,
+         inode-&gt;i_ino, (<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> <span class="hljs-keyword">long</span>)(iblock), create);
+
+     <span class="hljs-keyword">if</span> (iblock &gt;= SIMULA_FS_DATA_BLOCK_CNT)
+     {
+         <span class="hljs-keyword">return</span> -ENOSPC;
+     }
+     <span class="hljs-keyword">if</span> ((retval = sfs_get_file_entry(info, inode-&gt;i_ino, &amp;fe)) &lt; <span class="hljs-number">0</span>)
+     {
+         <span class="hljs-keyword">return</span> retval;
+     }
+     <span class="hljs-keyword">if</span> (!fe.blocks[iblock])
+     {
+         <span class="hljs-keyword">if</span> (!create)
+         {
+             <span class="hljs-keyword">return</span> -EIO;
+         }
+         <span class="hljs-keyword">else</span>
+         {
+             <span class="hljs-keyword">if</span> ((fe.blocks[iblock] = sfs_get_data_block(info)) ==
+                 INV_BLOCK)
+             {
+                 <span class="hljs-keyword">return</span> -ENOSPC;
+             }
+             <span class="hljs-keyword">if</span> ((retval = sfs_update_file_entry(info, inode-&gt;i_ino, &amp;fe))
+                 &lt; <span class="hljs-number">0</span>) 
+             {   
+                 <span class="hljs-keyword">return</span> retval;
+             }
+         }
+     }
+     phys = fe.blocks[iblock];
+     map_bh(bh_result, sb, phys);
+
+     <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+ }
+</code></pre>
+</li>
+<li><p>open, release, read, write, aio_read/read_iter (since kernel v3.16), aio_write/write_iter (since kernel v3.16), fsync (under a regular file&#x2019;s struct file_operations) &#x2013; All these operations should basically go through the buffer cache, i.e. should be implemented using the address space operations. And this being a common requirement, the kernel provides a generic set of kernel APIs, namely generic_file_open(), do_sync_read()/new_sync_read() (since kernel v3.16), do_sync_write()/new_sync_write() (since kernel v3.16), generic_file_aio_read()/generic_file_read_iter() (since kernel v3.16), generic_file_aio_write()/generic_file_write_iter() (since kernel v3.16), simple_sync_file()/noop_fsync() (since kernel v2.6.35). Moreover, the address space operations read &amp; write are no longer required to be given since kernel v4.1. Note that there is no API for release, as it is a &#x2018;return 0&#x2018; API. Check out the real_sfs.c file for the exact definition of struct file_operations sfs_fops.</p>
+</li>
+<li><p>readdir/iterate (since kernel v3.11) (under a directory&#x2019;s struct file_operations) &#x2013; sfs_readdir()/sfs_iterate() primarily reads the directory entries of an underlying directory (denoted by file), and fills it up into the VFS directory entry cache (pointed by dirent parameter) using the parameter function filldir, or into the directory context (pointed by ctx parameter) (since kernel v3.11).
+As real SFS has only one directory, the top one, this function basically fills up the directory entry cache with directory entries for all the files in the underlying file system, using the transformed sfs_list() (defined in real_sfs_ops.c), adapted from the browse_real_sfs application. Check out the real_sfs.c file for the complete sfs_readdir()/sfs_iterate() implementation, which starts with filling directory entries for &#x2018;.&#x2018; (current directory) and &#x2018;..&#x2018; (parent directory) using parameter function filldir(), or generic kernel function dir_emit_dots() (since kernel v3.11), and then for all the files of the real SFS, using sfs_list().</p>
+</li>
+<li><p>put_super (under struct super_operations) &#x2013; The previous custom implementation sfs_kill_sb() (pointed by kill_sb) has been enhanced by separating it into the custom part being put into sfs_put_super() (and now pointed by put_super), and the standard kill_block_super() being directly pointed by kill_sb. Check out the file real_sfs.c for all these changes.</p>
+</li>
+</ol>
+<p>With all these in place, one could see the amazing demo by Pugs in action, as shown in Figure 40. And don&#x2019;t forget watching the live log in /var/log/messages using a &#x2018;tail -f /var/log/messages&#x2018;, matching it with every command you issue on the mounted real SFS file system. This would give you the best insight into when does which system call gets called. Or, in other words which application invokes which system call from the file system front. For tracing all the system calls invoked by an application/command, use strace with the command, e.g. type &#x2018;strace ls&#x2018; instead of just &#x2018;ls&#x2018;.</p>
+<h2 id="notes">Notes</h2>
+<p>On distros like Ubuntu, you may find the log under <code>/var/log/syslog</code> instead of <code>/var/log/messages</code></p>
+
                     
                     </section>
                 

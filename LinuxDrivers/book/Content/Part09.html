@@ -53,7 +53,7 @@
         data-chapter-title="I/O Control in Linux"
         data-filepath="Content/Part09.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,138 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="io-control-in-linux">I/O Control in Linux</h1>
+<blockquote>
+<p>This ninth article, which is part of the series on Linux device drivers, talks about the typical ioctl() implementation and usage in Linux.</p>
+</blockquote>
+<p>&#x201C;Get me a laptop and tell me about the experiments on the x86-specific hardware interfacing conducted in yesterday&#x2019;s Linux device drivers&#x2019; laboratory session, and also about what&#x2019;s planned for the next session&#x201D;, cried Shweta, exasperated at being confined to bed and not being able to attend the classes. &#x201C;Calm down!!! Don&#x2019;t worry about that. We&#x2019;ll help you make up for your classes. But first tell us what happened to you, so suddenly&#x201D;, asked one of her friends, who had come to visit her in the hospital. &#x201C;It&#x2019;s all the fault of those chaats, I had in Rohan&#x2019;s birthday party. I had such a painful food poisoning that led me here&#x201D;, blamed Shweta. &#x201C;How are you feeling now?&#x201D;, asked Rohan sheepishly. &#x201C;I&#x2019;ll be all fine &#x2013; just tell me all about the fun with hardware, you guys had. I had been waiting to attend that session and all this had to happen, right then&#x201D;.</p>
+<p>Rohan sat down besides Shweta and summarized the session to her, hoping to soothe her. That excited her more and she starting forcing them to tell her about the upcoming sessions, as well. They knew that those would be to do something with hardware, but were unaware of the details. Meanwhile, the doctor comes in and requests everybody to wait outside. That was an opportunity to plan and prepare. And they decided to talk about the most common hardware controlling operation: the <code>ioctl()</code>. Here is how it went.</p>
+<h2 id="introducing-an-ioctl">Introducing an ioctl()</h2>
+<p>Input-output control (<code>ioctl</code>, in short) is a common operation or system call available with most of the driver categories. It is a &#x201C;one bill fits all&#x201D; kind of system call. If there is no other system call, which meets the requirement, then definitely ioctl() is the one to use. Practical examples include volume control for an audio device, display configuration for a video device, reading device registers, &#x2026; &#x2013; basically anything to do with any device input / output, or for that matter any device specific operations. In fact, it is even more versatile &#x2013; need not be tied to any device specific things but any kind of operation. An example includes debugging a driver, say by querying of driver data structures.</p>
+<p>Question is &#x2013; how could all these variety be achieved by a single function prototype. The trick is using its two key parameters: the command and the command&#x2019;s argument. The command is just some number, representing some operation, defined as per the requirement. The argument is the corresponding parameter for the operation. And then the <code>ioctl()</code> function implementation does a &#x201C;switch &#x2026; case&#x201D; over the command implementing the corresponding functionalities. The following had been its prototype in Linux kernel, for quite some time:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">ioctl</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *i, <span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> cmd, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> arg)</span></span>;
+</code></pre>
+<p>Though, recently from kernel 2.6.35, it has changed to the following:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">long</span> <span class="hljs-title">ioctl</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> cmd, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> arg)</span></span>;
+</code></pre>
+<p>If there is a need for more arguments, all of them are put in a structure and a pointer to the structure becomes the &#x2018;one&#x2019; command argument. Whether integer or pointer, the argument is taken up as a long integer in kernel space and accordingly type cast and processed.</p>
+<p>ioctl() is typically implemented as part of the corresponding driver and then an appropriate function pointer initialized with it, exactly as with other system calls <code>open()</code>, <code>read()</code>, &#x2026; For example, in character drivers, it is the ioctl or <code>unlocked_ioctl</code> (since kernel 2.6.35) function pointer field in the struct file_operations, which is to be initialized.</p>
+<p>Again like other system calls, it can be equivalently invoked from the user space using the <code>ioctl()</code> system call, prototyped in <code>&lt;sys/ioctl.h&gt;</code> as:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">ioctl</span><span class="hljs-params">(<span class="hljs-keyword">int</span> fd, <span class="hljs-keyword">int</span> cmd, ...)</span></span>;
+</code></pre>
+<p>Here, cmd is the same as implemented in the driver&#x2019;s ioctl() and the variable argument construct (&#x2026;) is a hack to be able to pass any type of argument (though only one) to the driver&#x2019;s ioctl(). Other parameters will be ignored.</p>
+<p>Note that both the command and command argument type definitions need to be shared across the driver (in kernel space) and the application (in user space). So, these definitions are commonly put into header files for each space.</p>
+<h2 id="querying-the-driver-internal-variables">Querying the driver internal variables</h2>
+<p>To better understand the boring theory explained above, here&#x2019;s the code set for the &#x201C;debugging a driver&#x201D; example mentioned above. This driver has 3 static global variables status, dignity, ego, which need to be queried and possibly operated from an application. query_ioctl.h defines the corresponding commands and command argument type. Listing follows:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">ifndef</span> QUERY_IOCTL_H</span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> QUERY_IOCTL_H</span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/ioctl.h&gt;</span></span>
+
+<span class="hljs-keyword">typedef</span> <span class="hljs-keyword">struct</span>
+{
+    <span class="hljs-keyword">int</span> status, dignity, ego;
+} <span class="hljs-keyword">query_arg_t</span>;
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> QUERY_GET_VARIABLES _IOR(<span class="hljs-string">&apos;q&apos;</span>, <span class="hljs-number">1</span>, query_arg_t *)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> QUERY_CLR_VARIABLES _IO(<span class="hljs-string">&apos;q&apos;</span>, <span class="hljs-number">2</span>)</span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+</code></pre>
+<p>Using these, the driver&#x2019;s <code>ioctl()</code> implementation in <code>query_ioctl.c</code> would be:</p>
+<pre><code class="lang-C"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> status = <span class="hljs-number">1</span>, dignity = <span class="hljs-number">3</span>, ego = <span class="hljs-number">5</span>;
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">2</span>,<span class="hljs-number">6</span>,<span class="hljs-number">35</span>))</span>
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">my_ioctl</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *i, <span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> cmd,
+    <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> arg)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">long</span> <span class="hljs-title">my_ioctl</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">int</span> cmd, <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> arg)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+</span>{
+    <span class="hljs-keyword">query_arg_t</span> q;
+
+    <span class="hljs-keyword">switch</span> (cmd)
+    {
+        <span class="hljs-keyword">case</span> QUERY_GET_VARIABLES:
+            q.status = status;
+            q.dignity = dignity;
+            q.ego = ego;
+            <span class="hljs-keyword">if</span> (copy_to_user((<span class="hljs-keyword">query_arg_t</span> *)arg, &amp;q,
+                <span class="hljs-keyword">sizeof</span>(<span class="hljs-keyword">query_arg_t</span>)))
+            {
+                <span class="hljs-keyword">return</span> -EACCES;
+            }
+            <span class="hljs-keyword">break</span>;
+        <span class="hljs-keyword">case</span> QUERY_CLR_VARIABLES:
+            status = <span class="hljs-number">0</span>;
+            dignity = <span class="hljs-number">0</span>;
+            ego = <span class="hljs-number">0</span>;
+            <span class="hljs-keyword">break</span>;
+        <span class="hljs-keyword">default</span>:
+            <span class="hljs-keyword">return</span> -EINVAL;
+    }
+
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+</code></pre>
+<p>And finally the corresponding invocation functions from the application query_app.c would be as follows:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;stdio.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;sys/ioctl.h&gt;</span></span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&quot;query_ioctl.h&quot;</span></span>
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">get_vars</span><span class="hljs-params">(<span class="hljs-keyword">int</span> fd)</span>
+</span>{
+    <span class="hljs-keyword">query_arg_t</span> q;
+
+    <span class="hljs-keyword">if</span> (ioctl(fd, QUERY_GET_VARIABLES, &amp;q) == -<span class="hljs-number">1</span>)
+    {
+        perror(<span class="hljs-string">&quot;query_apps ioctl get&quot;</span>);
+    }
+    <span class="hljs-keyword">else</span>
+    {
+        <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Status : %d\n&quot;</span>, q.status);
+        <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Dignity: %d\n&quot;</span>, q.dignity);
+        <span class="hljs-built_in">printf</span>(<span class="hljs-string">&quot;Ego    : %d\n&quot;</span>, q.ego);
+    }
+}
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">clr_vars</span><span class="hljs-params">(<span class="hljs-keyword">int</span> fd)</span>
+</span>{
+    <span class="hljs-keyword">if</span> (ioctl(fd, QUERY_CLR_VARIABLES) == -<span class="hljs-number">1</span>)
+    {
+        perror(<span class="hljs-string">&quot;query_apps ioctl clr&quot;</span>);
+    }
+}
+</code></pre>
+<p>Complete code of the above mentioned three files is included in the folder QueryIoctl, where the required Makefile is also present. You may download its tar-bzipped file as <a href="http://sysplay.in/blog/code/query_ioctl_code.tar.bz2" target="_blank">query_ioctl_code.tar.bz2</a>, untar it and then, do the following to try out:</p>
+<ul>
+<li>Build the &#x2018;query_ioctl&#x2019; driver (query_ioctl.ko file) and the application (query_app file) by running make using the provided Makefile.</li>
+<li>Load the driver using insmod query_ioctl.ko.</li>
+<li>With appropriate privileges and command-line arguments, run the application query_app:<ul>
+<li><code>./query_app</code> # To display the driver variables</li>
+<li><code>./query_app -c</code> # To clear the driver variables</li>
+<li><code>./query_app -g</code> # To display the driver variables</li>
+<li><code>./query_app -s</code> # To set the driver variables (Not mentioned above)</li>
+</ul>
+</li>
+<li>Unload the driver using <code>rmmod query_ioctl</code>.</li>
+</ul>
+<h2 id="defining-the-ioctl-commands">Defining the <code>ioctl()</code> commands</h2>
+<p>&#x201C;Visiting time is over&#x201D;, came calling the security guard. And all of Shweta&#x2019;s visitors packed up to leave. Stopping them, Shweta said, &#x201C;Hey!! Thanks a lot for all this help. I could understand most of this code, including the need for <code>copy_to_user()</code>, as we have learnt earlier. But just a question, what are these <code>_IOR</code>, <code>_IO</code>, etc used in defining the commands in query_ioctl.h. You said we could just use numbers for the same. But you are using all these weird things&#x201D;. Actually, they are usual numbers only. Just that, now additionally, some useful command related information is also encoded as part of these numbers using these various macros, as per the Portable Operating System Interface (POSIX) standard for ioctl. The standard talks about the 32-bit command numbers being formed of four components embedded into the [31:0] bits:</p>
+<ol>
+<li>Direction of command operation [bits 31:30] &#x2013; read, write, both, or none &#x2013; filled by the corresponding macro (<code>_IOR</code>, <code>_IOW</code>, <code>_IOWR</code>, <code>_IO</code>)</li>
+<li>Size of the command argument [bits 29:16] &#x2013; computed using sizeof() with the command argument&#x2019;s type &#x2013; the third argument to these macros</li>
+<li>8-bit magic number [bits 15:8] &#x2013; to render the commands unique enough &#x2013; typically an ASCII character (the first argument to these macros)</li>
+<li>Original command number [bits 7:0] &#x2013; the actual command number (1, 2, 3, &#x2026;), defined as per our requirement &#x2013; the second argument to these macros.</li>
+</ol>
+<p>&#x201C;Check out the header <code>&lt;asm-generic/ioctl.h&gt;</code> for implementation details&#x201D;, concluded Rohan while hurrying out of the room with a sigh of relief.</p>
+<h2 id="notes">Notes</h2>
+<p>Notes:</p>
+<ol>
+<li>The intention behind the POSIX standard of encoding the command is to be able to verify the parameters, direction, etc related to the command, even before it is passed to the driver, say by VFS. It is just that Linux has not yet implemented the verification part.</li>
+</ol>
+
                     
                     </section>
                 

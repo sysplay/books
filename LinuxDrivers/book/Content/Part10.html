@@ -53,7 +53,7 @@
         data-chapter-title="Kernel-Space Debuggers in Linux"
         data-filepath="Content/Part10.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,81 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="kernel-space-debuggers-in-linux">Kernel Space Debuggers in Linux</h1>
+<blockquote>
+<p>This tenth article, which is part of the series on Linux device drivers, talks about kernel space debugging in Linux.</p>
+</blockquote>
+<p>Shweta was back from hospital and relaxing in the library by reading up various books. Since the time she has known the ioctl way of debugging, she has been impatient to know more about debugging in kernel space. The basic curiosity coming from the fact that how and where would one run the kernel space debugger, if there is any. Contrast this with application/user space debugging, where we have the OS running underneath, and a shell or a GUI over it to run the debugger, say for example, the GNU debugger (<code>gdb</code>), the data display debugger (<code>ddd</code>). And viola, she came across this interesting kernel space debugging mechanism using <code>kgdb</code>, provided as part of the kernel itself, since kernel 2.6.26</p>
+<h2 id="debugger-challenge-in-kernel-space">Debugger challenge in kernel space</h2>
+<p>As we need some interface to be up, to run a debugger to debug anything, a debugger for debugging the kernel, could be visualized in 2 possible ways:</p>
+<ol>
+<li><p>Put the debugger into the kernel itself. And then the debugger runs from within, accessible through the usual monitor or console. An example of it is kdb. Until kernel 2.6.35, it was not official, meaning its source code was needed to be downloaded as 2 set of patches (one architecture dependent and one architecture independent) from ftp://oss.sgi.com/projects/kdb/download/ and then to be patched with the kernel source &#x2013; though since kernel 2.6.35, majority of it is part of the kernel source&#x2019;s official release. In either case, the kdb support needs to be enabled in the kernel source and then the kernel is to be compiled, installed and booted with. The boot screen itself would give the <code>kdb debugging</code> interface.</p>
+</li>
+<li><p>Put a minimal debugging server into the kernel; a debugger client would then connect to it from a remote host system&#x2019;s user space over some interface, say serial or ethernet. An example for that is kgdb &#x2013; the kernel&#x2019;s gdb server, to be used with gdb (client) from a remote system over either serial or ethernet. Since kernel 2.6.26, its serial interface part has been merged with kernel source&#x2019;s official release. Though, if interested in its network interface part, it would still need to be patched with one of the releases from <a href="http://sourceforge.net/projects/kgdb/" target="_blank">http://sourceforge.net/projects/kgdb/</a>. In either case, the next step would be to enable kgdb support in the kernel source and then the kernel is to be compiled, installed and booted with &#x2013; though this time to be connected with a remote debugger client.</p>
+</li>
+</ol>
+<p>Please note that in both the above cases, the complete kernel source for the kernel to be debugged is needed, unlike in case of building modules, where just headers are sufficient. Here is how to play around with <code>kgdb</code> over serial interface.</p>
+<h2 id="setting-up-the-linux-kernel-with-kgdb">Setting up the Linux kernel with kgdb</h2>
+<p><em>Pre-requisite:</em> Either kernel source package for the running kernel is installed on your system, or a corresponding kernel source release has been downloaded from <a href="http://kernel.org" target="_blank">http://kernel.org</a>.</p>
+<p>First of all, the kernel to be debugged need to have kgdb enabled and built into it. To achieve that, the kernel source has to be configured with <code>CONFIG_KGDB=y</code>. Additionally, for <code>kgdb</code> over serial, <code>CONFIG_KGDB_SERIAL_CONSOLE=y</code> needs to be configured. And <code>CONFIG_DEBUG_INFO</code> is preferred for symbolic data to be built into kernel for making debugging with gdb more meaningful. <code>CONFIG_FRAME_POINTER=y</code> enables frame pointers in the kernel allowing gdb to construct more accurate stack back traces. All these options are available under &#x201C;Kernel hacking&#x201D; in the menu obtained by issuing the following commands in the kernel source directory (preferably as root or using sudo):</p>
+<pre><code class="lang-C">$ make mrproper <span class="hljs-preprocessor"># To clean up properly</span>
+$ make oldconfig <span class="hljs-preprocessor"># Configure the kernel same as the current running one</span>
+$ make menuconfig <span class="hljs-preprocessor"># Start the ncurses based menu for further configuration</span>
+</code></pre>
+<p>See the highlighted selections in Figure 15, for how and where would these options be:</p>
+<ul>
+<li>&#x201C;KGDB: kernel debugging with remote gdb&#x201D; &#x2192; CONFIG_KGDB<ul>
+<li>&#x201C;KGDB: use kgdb over the serial console&#x201D; &#x2192; CONFIG_KGDB_SERIAL_CONSOLE</li>
+</ul>
+</li>
+<li>&#x201C;Compile the kernel with debug info&#x201D; &#x2192; CONFIG_DEBUG_INFO</li>
+<li>&#x201C;Compile the kernel with frame pointers&#x201D; &#x2192; CONFIG_FRAME_POINTER</li>
+</ul>
+<p><img src="../Images/Part10/figure_15_configuring_kernel_with_kgdb-1024x640.png" alt="Figure 15"></p>
+<p>Once configured and saved, the kernel can be built by typing make in the kernel source directory. And then a make install is expected to install it, along with adding an entry for the installed kernel in the grub configuration file. Depending on the distribution, the grub configuration file may be <code>/boot/grub/menu.lst</code>, <code>/etc/grub.cfg</code>, or something similar. Once installed, the kgdb related kernel boot parameters, need to be added to this newly added entry.</p>
+<p><img src="../Images/Part10/figure_16_grub_config_for_kernel_with_kgdb-1024x549.png" alt="Figure 16"></p>
+<p>Figure 16 highlights the kernel boot parameters added to the newly installed kernel, in the grub&#x2018;s configuration file.</p>
+<p><code>kgdboc</code> is for gdb connecting over console and the basic format is: <code>kgdboc=&lt;serial_device&gt;,&lt;baud_rate&gt;</code>
+where:
+<code>&lt;serial_device&gt;</code> is the serial device file on the system, which would run the kernel to be debugged, for the serial port to be used for debugging
+<code>&lt;baud_rate&gt;</code> is the baud rate of the serial port to be used for debugging</p>
+<p><code>kgdbwait</code> enables the booting kernel to wait till a remote gdb (i.e. gdb on another system) connects to it, and this parameter should be passed only after kgdboc.</p>
+<p>With this, the system is ready to reboot into this newly built and installed kernel. On reboot, at the grub&#x2018;s menu, select to boot from this new kernel, and then it will wait for gdb to connect with it from an another system over the serial port.</p>
+<p>All the above snapshots have been with kernel source 2.6.33.14, downloaded from <a href="http://kernel.org" target="_blank">http://kernel.org</a>. And the same should work for at the least any 2.6.3x release of kernel source. Also, the snapshots are captured for kgdb over serial device file <code>/dev/ttyS0</code>, i.e. the first serial port.</p>
+<h2 id="setting-up-gdb-on-another-system">Setting up gdb on another system</h2>
+<p><em>Pre-requisite:</em> Serial ports of the system to be debugged and the another system to run gdb from, should be connected using a null modem (i.e. a cross over serial) cable.</p>
+<p>Here are the gdb commands to get the gdb from the other system connect to the waiting kernel. All these commands have to be given on the gdb prompt, after typing gdb on the shell.</p>
+<p>Connecting over serial port /dev/ttyS0 (of the system running gdb) with baud rate 115200 bps:</p>
+<pre><code>$ gdb
+...
+(gdb) file vmlinux
+(gdb) set remote interrupt-sequence Ctrl-C
+(gdb) set remotebaud 115200
+(gdb) target remote /dev/ttyS0
+(gdb) continue
+</code></pre><p>In the above commands, vmlinux is the kernel image built with kgdb enabled and needs to be copied into the directory on the system, from where gdb is being executed. Also, the serial device file and its baud rate has to be correctly given as per one&#x2019;s system setup.</p>
+<h2 id="debugging-using-gdb-with-kgdb">Debugging using gdb with kgdb</h2>
+<p>After this, it is all like debugging an application from gdb. One may stop execution using <code>Ctrl+C</code>, add break points using b[reak], step execution using s[tep] or n[ext], &#x2026; &#x2013; the usual gdb way. For details on how to use gdb, there are enough tutorials available online. In fact, if not comfortable with text-based gdb, the debugging could be made GUI-based, using any of the standard GUI tools over gdb, for example, <code>ddd</code>, Eclipse, etc.</p>
+<h2 id="summing-up">Summing up</h2>
+<p>By now, Shweta was all excited to try out the kernel space debugging experiment using kgdb. And as she needed two systems to try it out, she decided to go to the Linux device drivers lab. There, she set up the system to be debugged, with the kgdb enabled kernel, and connected it with an another system using a null modem cable. Then on the second system, she executed gdb to remotely connect with and step through the kernel on the first system.</p>
+<h2 id="notes">Notes</h2>
+<p>Parameter for using kgdb over ethernet is kgdboe. It has the following format: <code>kgdboe=[&lt;this_udp_port&gt;]@&lt;this_ip&gt;/[this_dev],[&lt;remote_udp_port&gt;]@&lt;remote_ip&gt;/[&lt;remote_mac_addr&gt;]</code>
+where:
+<code>&lt;this_udp_port&gt;</code> is optional and defaults to 6443,
+<code>&lt;this_ip&gt;</code> is IP address of the system, which would run the kernel to be debugged,
+<code>&lt;this_dev&gt;</code> is optional and defaults to eth0,
+<code>&lt;remote_udp_port&gt;</code> is optional and defaults to 6442,
+<code>&lt;remote_ip&gt;</code> is IP address of the system, from which gdb would be connecting from,
+<code>&lt;remote_mac_addr&gt;</code> is optional and defaults to broadcast.</p>
+<p>Here are the gdb commands for connecting to kgdb over network port 6443 to IP address <code>192.168.1.2</code>:</p>
+<pre><code class="lang-C">$ gdb
+...
+(gdb) file vmlinux
+(gdb) set remotebreak 0
+(gdb) target remote udp:192.168.1.2:6443
+(gdb) continue
+</code></pre>
+
                     
                     </section>
                 

@@ -53,7 +53,7 @@
         data-chapter-title="Data Transfer to and from USB Devices"
         data-filepath="Content/Part13.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,176 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="usb-drivers-in-linux-data-transfer-to--from-usb-devices">USB Drivers in Linux: Data Transfer to &amp; from USB Devices</h1>
+<blockquote>
+<p>This thirteenth article, which is part of the series on Linux device drivers, details out the ultimate step of data transfer to and from a USB device using your first USB driver in Linux &#x2013; a continuation from the previous two articles.</p>
+</blockquote>
+<h2 id="usb-miscellany">USB miscellany</h2>
+<p>Pugs continued, &#x201C;To answer your question about how a driver selectively registers or skips a particular interface of a USB device, you need to understand the significance of the return value of <code>probe()</code> callback.&#x201D; Note that the USB core would invoke probe for all the interfaces of a detected device, except the ones which are already registered. So, for the first time, it would call for all. Now, if the probe returns 0, it means the driver has registered for that interface. Returning an error code indicates not registering for it. That&#x2019;s all. &#x201C;That was simple&#x201D;, commented Shweta.</p>
+<p>&#x201C;Now, let&#x2019;s talk about the ultimate &#x2013; data transfers to &amp; from a USB device&#x201D;, continued Pugs. &#x201C;But before that tell me what is this <code>MODULE_DEVICE_TABLE</code>? This is bothering me since you explained the USB device id table macros&#x201D;, asked Shweta pausing Pugs. &#x201C;That&#x2019;s another trivial stuff. It is mainly for the user-space depmod&#x201C;, said Pugs. &#x201C;Module&#x201D; is another name for a driver, which is dynamically loadable and unloadable. The <code>macro MODULE_DEVICE_TABLE</code> generates two variables in a module&#x2019;s read only section, which is extracted by depmod and stored in global map files under <code>/lib/modules/&lt;kernel_version&gt;</code>. <code>modules.usbmap</code> and <code>modules.pcimap</code> are two such files for USB &amp; PCI device drivers, respectively. This enables auto-loading of these drivers, as we saw usb-storage driver getting auto-loaded.</p>
+<h2 id="usb-data-transfer">USB data transfer</h2>
+<p>&#x201C;Time for USB data transfers. Let&#x2019;s build upon the USB device driver coded in our previous sessions, using the same handy JetFlash pen drive from Transcend with vendor id 0x058f and product id 0x6387.&#x201D;</p>
+<p>USB being a hardware protocol, it forms the usual horizontal layer in the kernel space. And hence for it to provide an interface to user space, it has to connect through one of the vertical layers. As character (driver) vertical is already discussed, it is the current preferred choice for the connection with the USB horizontal, for understanding the complete data transfer flow. Also, we do not need to get a free unreserved character major number, but can use the character major number 180, reserved for USB based character device files. Moreover, to achieve this complete character driver logic with USB horizontal in one go, the following are the APIs declared in <code>&lt;linux/usb.h&gt;</code>:</p>
+<pre><code class="lang-C"><span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">usb_register_dev</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> usb_interface *intf,
+                <span class="hljs-keyword">struct</span> usb_class_driver *class_driver)</span></span>;
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">usb_deregister_dev</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> usb_interface *intf,
+                <span class="hljs-keyword">struct</span> usb_class_driver *class_driver)</span></span>;
+</code></pre>
+<p>Usually, we would expect these functions to be invoked in the constructor and the destructor of a module, respectively. However, to achieve the hot-plug-n-play behaviour for the (character) device files corresponding to USB devices, these are instead invoked in the probe and the disconnect callbacks, respectively. First parameter in the above functions is the interface pointer received as the first parameter in both probe and disconnect. Second parameter &#x2013; struct usb_class_driver needs to be populated with the suggested device file name and the set of device file operations, before invoking <code>usb_register_dev()</code>. For the actual usage, refer to the functions <code>pen_probe()</code> and <code>pen_disconnect()</code> in the code listing of <code>pen_driver.c</code> below.</p>
+<p>Moreover, as the file operations (write, read, &#x2026;) are now provided, that is where exactly we need to do the data transfers to and from the USB device. So, <code>pen_write()</code> and <code>pen_read()</code>below shows the possible calls to usb_bulk_msg() (prototyped in <code>&lt;linux/usb.h&gt;</code>) to do the transfers over the pen drive&#x2019;s bulk end points 0x01 and 0x82, respectively. Refer to the &#x2018;E&#x2019; lines of the middle section in Figure 19 for the endpoint number listings of our pen drive. Refer to the header file <code>&lt;linux/usb.h&gt;</code> under kernel sources, for the complete list of USB core API prototypes for the other endpoint specific data transfer functions like usb_control_msg(), <code>usb_interrupt_msg()</code>, etc. <code>usb_rcvbulkpipe()</code>, <code>usb_sndbulkpipe()</code>, and many such other macros, also defined in <code>&lt;linux/usb.h&gt;</code>, compute the actual endpoint bitmask to be passed to the various USB core APIs.</p>
+<p><img src="../Images/Part13/figure_19_usb_proc_window_snippet.png" alt="Figure 19"></p>
+<p>Note that a pen drive belongs to a USB mass storage class, which expects a set of SCSI like commands to be transacted over the bulk endpoints. So, a raw read/write as shown in the code listing below may not really do a data transfer as expected, unless the data is appropriately formatted. But still, this summarizes the overall code flow of a USB driver. To get a feel of real working USB data transfer in a simple and elegant way, one would need some kind of custom USB device, something like the one available at <a href="http://lddk.esrijan.com/" target="_blank">eSrijan</a>.</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/module.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/kernel.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/usb.h&gt;</span></span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> MIN(a,b) (((a) &lt;= (b)) ? (a) : (b))</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> BULK_EP_OUT <span class="hljs-number">0x01</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> BULK_EP_IN <span class="hljs-number">0x82</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> MAX_PKT_SIZE <span class="hljs-number">512</span></span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> usb_device *device;
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> usb_class_driver <span class="hljs-keyword">class</span>;
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">char</span> bulk_buf[MAX_PKT_SIZE];
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">pen_open</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *i, <span class="hljs-keyword">struct</span> file *f)</span>
+</span>{
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">pen_close</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *i, <span class="hljs-keyword">struct</span> file *f)</span>
+</span>{
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">pen_read</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">char</span> __user *buf, size_t cnt, loff_t *off)</span>
+</span>{
+    <span class="hljs-keyword">int</span> retval;
+    <span class="hljs-keyword">int</span> read_cnt;
+
+    <span class="hljs-comment">/* Read the data from the bulk endpoint */</span>
+    retval = usb_bulk_msg(device, usb_rcvbulkpipe(device, BULK_EP_IN),
+            bulk_buf, MAX_PKT_SIZE, &amp;read_cnt, <span class="hljs-number">5000</span>);
+    <span class="hljs-keyword">if</span> (retval)
+    {
+        printk(KERN_ERR <span class="hljs-string">&quot;Bulk message returned %d\n&quot;</span>, retval);
+        <span class="hljs-keyword">return</span> retval;
+    }
+    <span class="hljs-keyword">if</span> (copy_to_user(buf, bulk_buf, MIN(cnt, read_cnt)))
+    {
+        <span class="hljs-keyword">return</span> -EFAULT;
+    }
+
+    <span class="hljs-keyword">return</span> MIN(cnt, read_cnt);
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">pen_write</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> __user *buf, size_t cnt,
+                                    loff_t *off)</span>
+</span>{
+    <span class="hljs-keyword">int</span> retval;
+    <span class="hljs-keyword">int</span> wrote_cnt = MIN(cnt, MAX_PKT_SIZE);
+
+    <span class="hljs-keyword">if</span> (copy_from_user(bulk_buf, buf, MIN(cnt, MAX_PKT_SIZE)))
+    {
+        <span class="hljs-keyword">return</span> -EFAULT;
+    }
+
+    <span class="hljs-comment">/* Write the data into the bulk endpoint */</span>
+    retval = usb_bulk_msg(device, usb_sndbulkpipe(device, BULK_EP_OUT),
+            bulk_buf, MIN(cnt, MAX_PKT_SIZE), &amp;wrote_cnt, <span class="hljs-number">5000</span>);
+    <span class="hljs-keyword">if</span> (retval)
+    {
+        printk(KERN_ERR <span class="hljs-string">&quot;Bulk message returned %d\n&quot;</span>, retval);
+        <span class="hljs-keyword">return</span> retval;
+    }
+
+    <span class="hljs-keyword">return</span> wrote_cnt;
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> file_operations fops =
+{
+    .owner = THIS_MODULE,
+    .open = pen_open,
+    .release = pen_close,
+    .read = pen_read,
+    .write = pen_write,
+};
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">pen_probe</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> usb_interface *interface, <span class="hljs-keyword">const</span> <span class="hljs-keyword">struct</span> usb_device_id *id)</span>
+</span>{
+    <span class="hljs-keyword">int</span> retval;
+
+    device = interface_to_usbdev(interface);
+
+    <span class="hljs-keyword">class</span>.name = <span class="hljs-string">&quot;usb/pen%d&quot;</span>;
+    <span class="hljs-keyword">class</span>.fops = &amp;fops;
+    <span class="hljs-keyword">if</span> ((retval = usb_register_dev(interface, &amp;<span class="hljs-keyword">class</span>)) &lt; <span class="hljs-number">0</span>)
+    {
+        <span class="hljs-comment">/* Something prevented us from registering this driver */</span>
+        printk(KERN_ERR <span class="hljs-string">&quot;Not able to get a minor for this device.&quot;</span>);
+    }
+    <span class="hljs-keyword">else</span>
+    {
+        printk(KERN_INFO <span class="hljs-string">&quot;Minor obtained: %d\n&quot;</span>, interface-&gt;minor);
+    }
+
+    <span class="hljs-keyword">return</span> retval;
+}
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">pen_disconnect</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> usb_interface *interface)</span>
+</span>{
+    usb_deregister_dev(interface, &amp;<span class="hljs-keyword">class</span>);
+}
+
+<span class="hljs-comment">/* Table of devices that work with this driver */</span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> usb_device_id pen_table[] =
+{
+    { USB_DEVICE(<span class="hljs-number">0x058F</span>, <span class="hljs-number">0x6387</span>) },
+    {} <span class="hljs-comment">/* Terminating entry */</span>
+};
+MODULE_DEVICE_TABLE (usb, pen_table);
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> usb_driver pen_driver =
+{
+    .name = <span class="hljs-string">&quot;pen_driver&quot;</span>,
+    .probe = pen_probe,
+    .disconnect = pen_disconnect,
+    .id_table = pen_table,
+};
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> __<span class="hljs-function">init <span class="hljs-title">pen_init</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span>
+</span>{
+    <span class="hljs-keyword">int</span> result;
+
+    <span class="hljs-comment">/* Register this driver with the USB subsystem */</span>
+    <span class="hljs-keyword">if</span> ((result = usb_register(&amp;pen_driver)))
+    {
+        printk(KERN_ERR <span class="hljs-string">&quot;usb_register failed. Error number %d&quot;</span>, result);
+    }
+    <span class="hljs-keyword">return</span> result;
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> __<span class="hljs-function"><span class="hljs-built_in">exit</span> <span class="hljs-title">pen_exit</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span>
+</span>{
+    <span class="hljs-comment">/* Deregister this driver with the USB subsystem */</span>
+    usb_deregister(&amp;pen_driver);
+}
+
+module_init(pen_init);
+module_exit(pen_exit);
+
+MODULE_LICENSE(<span class="hljs-string">&quot;GPL&quot;</span>);
+MODULE_AUTHOR(<span class="hljs-string">&quot;Anil Kumar Pugalia &lt;email@sarika-pugs.com&gt;&quot;</span>);
+MODULE_DESCRIPTION(<span class="hljs-string">&quot;USB Pen Device Driver&quot;</span>);
+</code></pre>
+<p>As a reminder, the usual steps for any Linux device driver may be repeated with the above code, along with the pen drive steps:</p>
+<p>Build the driver (<code>pen_driver.ko file</code>) by running <code>make</code>.
+Load the driver using <code>insmod pen_driver.ko</code>.
+Plug-in the pen drive (after making sure that usb-storage driver is not already loaded).
+Check for the dynamic creation of <code>/dev/pen0</code>. (0 being the minor number obtained &#x2013; check dmesg logs for the value on your system)
+Possibly try some <code>write/read</code> on <code>/dev/pen0</code>. (Though you may mostly get connection timeout and/or broken pipe errors because of non-conformant SCSI commands)
+Unplug-out the pen drive and look out for gone <code>/dev/pen0</code>.
+Unload the driver using <code>rmmod pen_driver</code>.</p>
+<h2 id="summing-up">Summing up</h2>
+<p>Meanwhile, Pugs hooked up his first of its kind creation &#x2013; the Linux device driver kit (LDDK) into his system to show a live demonstration of the USB data transfers. &#x201C;A ha! Finally a cool complete working USB driver&#x201D;, quipped excited Shweta. &#x201C;Want to have more fun. We could do a block driver over it&#x201D;, added Pugs. &#x201C;O! Really&#x201D;, Shweta asked with a glee on her face. &#x201C;Yes. But before that we would need to understand the partitioning mechanisms&#x201D;, commented Pugs.</p>
+
                     
                     </section>
                 

@@ -53,7 +53,7 @@
         data-chapter-title="Character Device Files - Creation &amp; Operations"
         data-filepath="Content/Part05.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,139 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="character-device-files--creation--operations">Character Device Files - Creation &amp; Operations</h1>
+<blockquote>
+<p>This fifth article, which is part of the series on Linux device drivers, is continuation of the various concepts of character drivers and their implementation, dealt with in the previous article.</p>
+</blockquote>
+<p>In our previous article, we noted that even with the registration for <code>&lt;major, minor&gt;</code> device range, the device files were not created under the <code>/dev</code>, rather Shweta had to create them by hand using mknod. However, on further study, Shweta figured out a way for the automatic creation of the device files using the udev daemon. She also learnt the second step for connecting the device file with the device driver &#x2013; &quot;Linking the device file operations to the device driver functions&quot;. Here are her learnings.</p>
+<h2 id="automatic-creation-of-device-files">Automatic creation of device files</h2>
+<p>Earlier in kernel 2.4, automatic creation of device files was done by the kernel itself, by calling the appropriate APIs of devfs. However, as kernel evolved, kernel developers realized that device files are more of a user space thing and hence as a policy only the users should deal with it, not the kernel. With this idea, now kernel only populates the appropriate device class &amp; device info into the <code>/sys</code> window for the device under consideration. And then, the user space need to interpret it and take an appropriate action. In most Linux desktop systems, the <code>udev</code> daemon picks up that information and accordingly creates the device files.</p>
+<p>udev can be further configured using its configuration files to tune the device file names, their permissions, their types, etc. So, as far as driver is concerned, the appropriate <code>/sys</code> entries need to be populated using the Linux device model APIs declared in <code>&lt;linux/device.h&gt;</code> and the rest would be handled by <code>udev</code>. Device class is created as follows:</p>
+<pre><code>struct class *cl = class_create(THIS_MODULE, &quot;&lt;device class name&gt;&quot;);
+</code></pre><p>and then the device info (<code>&lt;major, minor&gt;</code>) under this class is populated by:</p>
+<pre><code>device_create(cl, NULL, first, NULL, &quot;&lt;device name format&gt;&quot;, &#x2026;);
+</code></pre><p>where first is the <code>dev_t</code> with the corresponding <code>&lt;major, minor&gt;</code>.</p>
+<p>The corresponding complementary or the inverse calls, which should be called in chronologically reverse order, are as follows:</p>
+<pre><code class="lang-C">device_destroy(cl, first);
+class_destroy(cl);
+</code></pre>
+<p>Refer to Figure 9, for the <code>/sys</code> entries created using &quot;chardrv&quot; as the <code>&lt;device class name&gt;</code> and &quot;mynull&quot; as the <code>&lt;device name format&gt;</code>. That also shows the device file, created by <code>udev</code>, based on the <code>&lt;major&gt;:&lt;minor&gt;</code> entry in the dev file.</p>
+<p><img src="../Images/Part5/figure_9_auto_dev_file_creation.png" alt="Figure 9"></p>
+<p>In case of multiple minors, <code>device_create()</code> and <code>device_destroy()</code> APIs may be put in for-loop, and the <code>&lt;device name format&gt;</code>string could be useful. For example, the <code>device_create()</code> call in a for-loop indexed by &apos;i&apos; could be as follows:</p>
+<pre><code class="lang-C">device_create(cl, <span class="hljs-literal">NULL</span>, MKDEV(MAJOR(first), MINOR(first) + i), <span class="hljs-literal">NULL</span>, <span class="hljs-string">&quot;mynull%d&quot;</span>, i);
+</code></pre>
+<h2 id="file-operations">File Operations</h2>
+<p>Whatever system calls or more commonly file operations we talk of over a regular file, are applicable to the device files as well. That&#x2019;s what we say a file is a file, and in Linux almost everything is a file from user space perspective. The difference lies in the kernel space, where virtual file system (VFS) decodes the file type and transfers the file operations to the appropriate channel, like file system module in case of a regular file or directory, corresponding device driver in case of a device file. Our discussion of interest is the second case.</p>
+<p>Now, for VFS to pass the device file operations onto the driver, it should have been told about that. And yes, that is what is called registering the file operations by the driver with the VFS. This involves two steps. (The parenthesised text below refers to the &#x2018;null driver&#x2019; code following it.) First, is to fill in a file operations structure (<code>struct file_operations pugs_fops</code>) with the desired file operations (<code>my_open</code>, <code>my_close</code>, <code>my_read</code>, <code>my_write</code>, &#x2026;) and to initialize the character device structure (<code>struct cdev c_dev</code>) with that, using <code>cdev_init()</code>. The second step is to hand this structure to the VFS using the call <code>cdev_add()</code>. Both <code>cdev_init()</code> and <code>cdev_add()</code> are declared in <code>&lt;linux/cdev.h&gt;</code>. Obviously, the actual file operations (<code>my_open</code>, <code>my_close</code>, <code>my_read</code>, <code>my_write</code>) also had to be coded by Shweta. So, to start with, Shweta kept them as simple as possible, so as to say, as easy as the &#x201C;null driver&#x201D;.</p>
+<h2 id="the-null-driver">The Null driver</h2>
+<p>Following these steps, Shweta put all the pieces together to attempt her first character device driver. Let&#x2019;s see what was the outcome. Here&#x2019;s the complete code:</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/module.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/version.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/kernel.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/types.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/kdev_t.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/fs.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/device.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/cdev.h&gt;</span></span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">dev_t</span> first; <span class="hljs-comment">// Global variable for the first device number</span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> cdev c_dev; <span class="hljs-comment">// Global variable for the character device structure</span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> <span class="hljs-keyword">class</span> *cl; <span class="hljs-comment">// Global variable for the device class</span>
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">my_open</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *i, <span class="hljs-keyword">struct</span> file *f)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: open()\n&quot;</span>);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">my_close</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *i, <span class="hljs-keyword">struct</span> file *f)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: close()\n&quot;</span>);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_read</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">char</span> __user *buf, size_t len, loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: read()\n&quot;</span>);
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+<span class="hljs-function"><span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">my_write</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *f, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> __user *buf, size_t len,
+    loff_t *off)</span>
+</span>{
+    printk(KERN_INFO <span class="hljs-string">&quot;Driver: write()\n&quot;</span>);
+    <span class="hljs-keyword">return</span> len;
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> file_operations pugs_fops =
+{
+    .owner = THIS_MODULE,
+    .open = my_open,
+    .release = my_close,
+    .read = my_read,
+    .write = my_write
+};
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> __<span class="hljs-function">init <span class="hljs-title">ofcd_init</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span> <span class="hljs-comment">/* Constructor */</span>
+</span>{
+    <span class="hljs-keyword">int</span> ret;
+    <span class="hljs-keyword">struct</span> device *dev_ret;
+
+    printk(KERN_INFO <span class="hljs-string">&quot;Namaskar: ofcd registered&quot;</span>);
+    <span class="hljs-keyword">if</span> ((ret = alloc_chrdev_region(&amp;first, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-string">&quot;Shweta&quot;</span>)) &lt; <span class="hljs-number">0</span>)
+    {
+        <span class="hljs-keyword">return</span> ret;
+    }
+    <span class="hljs-keyword">if</span> (IS_ERR(cl = class_create(THIS_MODULE, <span class="hljs-string">&quot;chardrv&quot;</span>)))
+    {
+        unregister_chrdev_region(first, <span class="hljs-number">1</span>);
+        <span class="hljs-keyword">return</span> PTR_ERR(cl);
+    }
+    <span class="hljs-keyword">if</span> (IS_ERR(dev_ret = device_create(cl, <span class="hljs-literal">NULL</span>, first, <span class="hljs-literal">NULL</span>, <span class="hljs-string">&quot;mynull&quot;</span>)))
+    {
+        class_destroy(cl);
+        unregister_chrdev_region(first, <span class="hljs-number">1</span>);
+        <span class="hljs-keyword">return</span> PTR_ERR(dev_ret);
+    }
+
+    cdev_init(&amp;c_dev, &amp;pugs_fops);
+    <span class="hljs-keyword">if</span> ((ret = cdev_add(&amp;c_dev, first, <span class="hljs-number">1</span>)) &lt; <span class="hljs-number">0</span>)
+    {
+        device_destroy(cl, first);
+        class_destroy(cl);
+        unregister_chrdev_region(first, <span class="hljs-number">1</span>);
+        <span class="hljs-keyword">return</span> ret;
+    }
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> __<span class="hljs-function"><span class="hljs-built_in">exit</span> <span class="hljs-title">ofcd_exit</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span> <span class="hljs-comment">/* Destructor */</span>
+</span>{
+    cdev_del(&amp;c_dev);
+    device_destroy(cl, first);
+    class_destroy(cl);
+    unregister_chrdev_region(first, <span class="hljs-number">1</span>);
+    printk(KERN_INFO <span class="hljs-string">&quot;Alvida: ofcd unregistered&quot;</span>);
+}
+
+module_init(ofcd_init);
+module_exit(ofcd_exit);
+
+MODULE_LICENSE(<span class="hljs-string">&quot;GPL&quot;</span>);
+MODULE_AUTHOR(<span class="hljs-string">&quot;Anil Kumar Pugalia &lt;email@sarika-pugs.com&gt;&quot;</span>);
+MODULE_DESCRIPTION(<span class="hljs-string">&quot;Our First Character Driver&quot;</span>);
+</code></pre>
+<p>Then, Shweta repeated the usual build with new test steps as follows:</p>
+<ol>
+<li>Build the driver (.ko file) by running make.</li>
+<li>Load the driver using <code>insmod</code>.</li>
+<li>List the loaded modules using <code>lsmod</code>.</li>
+<li>List the major number allocated using <code>cat /proc/devices</code>.</li>
+<li>&#x201C;null driver&#x201D; specific experiments (Refer to Figure 10 for details).</li>
+<li>Unload the driver using <code>rmmod</code>.</li>
+</ol>
+<p><img src="../Images/Part5/figure_10_null_driver_experiments.png" alt="Figure 10"></p>
+<h2 id="summing-up">Summing up</h2>
+<p>Shweta was surely happy as all on her own she got a character driver written, which works same as the driver for the standard device file <code>/dev/null</code>. To understand what it means, check for yourself the <code>&lt;major, minor&gt;</code> tuple for <code>/dev/null</code>, and similarly also try out the echo and cat commands with it.</p>
+<p>But one thing started bothering Shweta. She had got her own calls (<code>my_open</code>, <code>my_close</code>, <code>my_read</code>, <code>my_write</code>) in her driver, but how are they working so unusually unlike any regular file system calls. What&#x2019;s so unusual? Whatever I write, I get nothing when read &#x2013; isn&#x2019;t that unusual, at least from regular file operations&#x2019; perspective. Any guesses on how would she crack this nut? Watch out for the next article.</p>
+
                     
                     </section>
                 

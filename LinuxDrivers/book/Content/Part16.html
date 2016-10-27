@@ -53,7 +53,7 @@
         data-chapter-title="Kernel Window - Peeping through /proc"
         data-filepath="Content/Part16.md"
         data-basepath=".."
-        data-revision="Tue Feb 23 2016 23:10:23 GMT+0530 (IST)"
+        data-revision="Thu Oct 27 2016 14:08:48 GMT+0300 (AST)"
         data-innerlanguage="">
     
 
@@ -475,7 +475,217 @@
                 
                     <section class="normal" id="section-">
                     
-                        
+                        <h1 id="kernel-window--peeping-through-proc">Kernel Window - Peeping through /proc</h1>
+<blockquote>
+<p>This sixteenth article, which is part of the series on Linux device drivers, demonstrates the creation and usage of files under the /proc virtual file-system.</p>
+</blockquote>
+<h2 id="useful-kernel-windows">Useful kernel windows</h2>
+<p>After many months, Shweta and Pugs got together for a peaceful technical romancing. All through, we have been using all kinds of kernel windows especially through the /proc virtual file-system (using cat), to help us out in decoding the various nitty-gritties of Linux device drivers. Here&#x2019;s a non-exhaustive summary listing:</p>
+<ul>
+<li>/proc/modules &#x2013; Listing of all the dynamically loaded modules</li>
+<li>/proc/devices &#x2013; Listing of all the registered character and block major numbers</li>
+<li>/proc/iomem &#x2013; Listing of on-system physical RAM &amp; bus device addresses</li>
+<li>/proc/ioports &#x2013; Listing of on-system I/O port addresses (specially for x86 systems)</li>
+<li>/proc/interrupts &#x2013; Listing of all the registered interrupt request numbers</li>
+<li>/proc/softirqs &#x2013; Listing of all the registered soft irqs</li>
+<li>/proc/kallsyms &#x2013; Listing of all the running kernel symbols, including from loaded modules</li>
+<li>/proc/partitions &#x2013; Listing of currently connected block devices &amp; their partitions</li>
+<li>/proc/filesystems &#x2013; Listing of currently active file-system drivers</li>
+<li>/proc/swaps &#x2013; Listing of currently active swaps</li>
+<li>/proc/cpuinfo &#x2013; Information about the CPU(s) on the system</li>
+<li>/proc/meminfo &#x2013; Information about the memory on the system, viz. RAM, swap, &#x2026;</li>
+</ul>
+<h2 id="custom-kernel-windows">Custom kernel windows</h2>
+<p>&#x201C;Yes, these have been really helpful in understanding and debugging the Linux device drivers. But is it possible for us to also provide some help? Yes, I mean can we create one such kernel window through /proc?&#x201D;, questioned Shweta.</p>
+<p>&#x201C;Why one? As many as you want. And that&#x2019;s simple &#x2013; just use the right set of APIs and there you go.&#x201D;</p>
+<p>&#x201C;For you every thing is simple.&#x201D;</p>
+<p>&#x201C;No yaar, this is seriously simple&#x201D;, smiled Pugs. &#x201C;Just watch out, me creating one for you.&#x201D;</p>
+<p>And in jiffies, Pugs created the <code>proc_window.c</code> file below (including the changes, which has taken place in kernel v3.10 and v4.3):</p>
+<pre><code class="lang-C"><span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/module.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/kernel.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/version.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">10</span>,<span class="hljs-number">0</span>))</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/fs.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/seq_file.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/proc_fs.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/jiffies.h&gt;</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">include</span> <span class="hljs-string">&lt;linux/uaccess.h&gt;</span></span>
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">10</span>,<span class="hljs-number">0</span>))</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> STR_PRINTF_RET(len, str, args...) len += sprintf(page + len, str, ## args)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">elif</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">4</span>,<span class="hljs-number">3</span>,<span class="hljs-number">0</span>))</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> STR_PRINTF_RET(len, str, args...) len += seq_printf(m, str, ## args)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">define</span> STR_PRINTF_RET(len, str, args...) seq_printf(m, str, ## args)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> proc_dir_entry *parent, *file, *link;
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> state = <span class="hljs-number">0</span>;
+
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">10</span>,<span class="hljs-number">0</span>))</span>
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">time_read</span><span class="hljs-params">(<span class="hljs-keyword">char</span> *page, <span class="hljs-keyword">char</span> **start, off_t off, <span class="hljs-keyword">int</span> count, <span class="hljs-keyword">int</span> *eof,
+    <span class="hljs-keyword">void</span> *data)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">time_read</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> seq_file *m, <span class="hljs-keyword">void</span> *v)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+</span>{
+    <span class="hljs-keyword">int</span> len = <span class="hljs-number">0</span>, val;
+    <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> act_jiffies;
+
+    STR_PRINTF_RET(len, <span class="hljs-string">&quot;state = %d\n&quot;</span>, state);
+    act_jiffies = jiffies - INITIAL_JIFFIES;
+    val = jiffies_to_msecs(act_jiffies);
+    <span class="hljs-keyword">switch</span> (state)
+    {
+        <span class="hljs-keyword">case</span> <span class="hljs-number">0</span>:
+            STR_PRINTF_RET(len, <span class="hljs-string">&quot;time = %ld jiffies\n&quot;</span>, act_jiffies);
+            <span class="hljs-keyword">break</span>;
+        <span class="hljs-keyword">case</span> <span class="hljs-number">1</span>:
+            STR_PRINTF_RET(len, <span class="hljs-string">&quot;time = %d msecs\n&quot;</span>, val);
+            <span class="hljs-keyword">break</span>;
+        <span class="hljs-keyword">case</span> <span class="hljs-number">2</span>:
+            STR_PRINTF_RET(len, <span class="hljs-string">&quot;time = %ds %dms\n&quot;</span>,
+                    val / <span class="hljs-number">1000</span>, val % <span class="hljs-number">1000</span>);
+            <span class="hljs-keyword">break</span>;
+        <span class="hljs-keyword">case</span> <span class="hljs-number">3</span>:
+            val /= <span class="hljs-number">1000</span>;
+            STR_PRINTF_RET(len, <span class="hljs-string">&quot;time = %02d:%02d:%02d\n&quot;</span>,
+                    val / <span class="hljs-number">3600</span>, (val / <span class="hljs-number">60</span>) % <span class="hljs-number">60</span>, val % <span class="hljs-number">60</span>);
+            <span class="hljs-keyword">break</span>;
+        <span class="hljs-keyword">default</span>:
+            STR_PRINTF_RET(len, <span class="hljs-string">&quot;\n&quot;</span>);
+            <span class="hljs-keyword">break</span>;
+    }
+
+    <span class="hljs-keyword">return</span> len;
+}
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">10</span>,<span class="hljs-number">0</span>))</span>
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">time_write</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *file, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> __user *buffer,
+    <span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span> count, <span class="hljs-keyword">void</span> *data)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+<span class="hljs-keyword">static</span> ssize_t <span class="hljs-title">time_write</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> file *file, <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span> __user *buffer,
+    size_t count, loff_t *off)</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+</span>{
+    <span class="hljs-keyword">char</span> kbuf[<span class="hljs-number">2</span>];
+
+    <span class="hljs-keyword">if</span> (count &gt; <span class="hljs-number">2</span>)
+        <span class="hljs-keyword">return</span> count;
+    <span class="hljs-keyword">if</span> (copy_from_user(kbuf, buffer, count))
+    {
+        <span class="hljs-keyword">return</span> -EFAULT;
+    }
+    <span class="hljs-keyword">if</span> ((count == <span class="hljs-number">2</span>) &amp;&amp; (kbuf[<span class="hljs-number">1</span>] != <span class="hljs-string">&apos;\n&apos;</span>))
+        <span class="hljs-keyword">return</span> count;
+    <span class="hljs-keyword">if</span> ((kbuf[<span class="hljs-number">0</span>] &lt; <span class="hljs-string">&apos;0&apos;</span>) || (<span class="hljs-string">&apos;9&apos;</span> &lt; kbuf[<span class="hljs-number">0</span>]))
+        <span class="hljs-keyword">return</span> count;
+    state = kbuf[<span class="hljs-number">0</span>] - <span class="hljs-string">&apos;0&apos;</span>;
+    <span class="hljs-keyword">return</span> count;
+}
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">10</span>,<span class="hljs-number">0</span>))</span>
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> <span class="hljs-title">time_open</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> inode *inode, <span class="hljs-keyword">struct</span> file *file)</span>
+</span>{
+    <span class="hljs-keyword">return</span> single_open(file, time_read, <span class="hljs-literal">NULL</span>);
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">struct</span> file_operations fops =
+{
+    .owner = THIS_MODULE,
+    .open = time_open,
+    .read = seq_read,
+    .write = time_write
+};
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> __<span class="hljs-function">init <span class="hljs-title">proc_win_init</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span>
+</span>{
+    <span class="hljs-keyword">if</span> ((parent = proc_mkdir(<span class="hljs-string">&quot;anil&quot;</span>, <span class="hljs-literal">NULL</span>)) == <span class="hljs-literal">NULL</span>)
+    {
+        <span class="hljs-keyword">return</span> -<span class="hljs-number">1</span>;
+    }
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">10</span>,<span class="hljs-number">0</span>))</span>
+    <span class="hljs-keyword">if</span> ((file = create_proc_entry(<span class="hljs-string">&quot;rel_time&quot;</span>, <span class="hljs-number">0666</span>, parent)) == <span class="hljs-literal">NULL</span>)
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+    <span class="hljs-keyword">if</span> ((file = proc_create(<span class="hljs-string">&quot;rel_time&quot;</span>, <span class="hljs-number">0666</span>, parent, &amp;fops)) == <span class="hljs-literal">NULL</span>)
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+    {
+        remove_proc_entry(<span class="hljs-string">&quot;anil&quot;</span>, <span class="hljs-literal">NULL</span>);
+        <span class="hljs-keyword">return</span> -<span class="hljs-number">1</span>;
+    }
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">10</span>,<span class="hljs-number">0</span>))</span>
+    file-&gt;read_proc = time_read;
+    file-&gt;write_proc = time_write;
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+    <span class="hljs-keyword">if</span> ((link = proc_symlink(<span class="hljs-string">&quot;rel_time_l&quot;</span>, parent, <span class="hljs-string">&quot;rel_time&quot;</span>)) == <span class="hljs-literal">NULL</span>)
+    {
+        remove_proc_entry(<span class="hljs-string">&quot;rel_time&quot;</span>, parent);
+        remove_proc_entry(<span class="hljs-string">&quot;anil&quot;</span>, <span class="hljs-literal">NULL</span>);
+        <span class="hljs-keyword">return</span> -<span class="hljs-number">1</span>;
+    }
+<span class="hljs-preprocessor">#<span class="hljs-keyword">if</span> (LINUX_VERSION_CODE &lt; KERNEL_VERSION(<span class="hljs-number">3</span>,<span class="hljs-number">10</span>,<span class="hljs-number">0</span>))</span>
+    link-&gt;uid = <span class="hljs-number">0</span>;
+    link-&gt;gid = <span class="hljs-number">100</span>;
+<span class="hljs-preprocessor">#<span class="hljs-keyword">else</span></span>
+    proc_set_user(link, KUIDT_INIT(<span class="hljs-number">0</span>), KGIDT_INIT(<span class="hljs-number">100</span>));
+<span class="hljs-preprocessor">#<span class="hljs-keyword">endif</span></span>
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+}
+
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> __<span class="hljs-function"><span class="hljs-built_in">exit</span> <span class="hljs-title">proc_win_exit</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span>
+</span>{
+    remove_proc_entry(<span class="hljs-string">&quot;rel_time_l&quot;</span>, parent);
+    remove_proc_entry(<span class="hljs-string">&quot;rel_time&quot;</span>, parent);
+    remove_proc_entry(<span class="hljs-string">&quot;anil&quot;</span>, <span class="hljs-literal">NULL</span>);
+}
+
+module_init(proc_win_init);
+module_exit(proc_win_exit);
+
+MODULE_LICENSE(<span class="hljs-string">&quot;GPL&quot;</span>);
+MODULE_AUTHOR(<span class="hljs-string">&quot;Anil Kumar Pugalia &lt;email@sarika-pugs.com&gt;&quot;</span>);
+MODULE_DESCRIPTION(<span class="hljs-string">&quot;Kernel window /proc Demonstration Driver&quot;</span>);
+</code></pre>
+<p>And then Pugs did the following steps:</p>
+<ul>
+<li>Built the driver (proc_window.ko file) using the usual driver&#x2019;s Makefile.</li>
+<li>Loaded the driver using insmod.</li>
+<li>Showed various experiments using the newly created proc windows. (Refer to Figure 28.)</li>
+<li>And finally, unloaded the driver using rmmod.</li>
+</ul>
+<p><img src="../Images/Part16/figure_28_proc_driver-1024x549.png" alt="Figure 28"></p>
+<h2 id="demystifying-the-details">Demystifying the details</h2>
+<p>Starting from the constructor proc_win_init(), three proc entries are created:</p>
+<ul>
+<li>Directory anil under <code>/proc</code> (i.e. NULL parent) with default permissions 0755, using <code>proc_mkdir()</code></li>
+<li>Regular file rel_time under the above directory anil with permissions 0666, using <code>create_proc_entry()</code> or <code>proc_create()</code> (since kernel v3.10)</li>
+<li>Soft link rel_time_l to the above file rel_time under the same directory anil, using <code>proc_symlink()</code></li>
+</ul>
+<p>The corresponding removal of these three is achieved using <code>remove_proc_entry()</code> in the destructor <code>proc_win_exit()</code>, in chronological reverse order.</p>
+<p>For every entry created under <code>/proc</code>, a corresponding <code>struct proc_dir_entry</code> is created. After which many of its fields could be further updated as needed:</p>
+<ul>
+<li>mode &#x2013; Permissions of the file</li>
+<li>uid &#x2013; User ID of the file</li>
+<li>gid &#x2013; Group ID of the file</li>
+</ul>
+<p>Since kernel v3.10, specific API <code>proc_set_user()</code> has been provided to update the uid &amp; gid, instead of directly modifying the fields.</p>
+<p>Additionally, for a regular file, the following two function pointers for read and write over the file could be provided, respectively:</p>
+<ul>
+<li><code>int (*read_proc)(char *page, char **start, off_t off, int count, int *eof, void *data)</code></li>
+<li><code>int (*write_proc)(struct file *file, const char __user *buffer, unsigned long count, void *data)</code></li>
+</ul>
+<p>Again, since kernel v3.10, the read &amp; write fields of struct file_operations are to be used respectively, instead of the above two.</p>
+<p><code>write_proc()</code> is very similar to the character device file operation write. And the above code implementation, lets the user to write a digit from 0 to 9, and accordingly sets the internal state.</p>
+<p><code>read_proc()</code> in the above code implementation provides the current state and the time since the system has been booted up in different units based on the current state. These are, jiffies in state 0; milliseconds in state 1; seconds &amp; milliseconds in state 2; hours : minutes : seconds in state 3; and <code>&lt;not implemented&gt;</code> in other states. And to check the computation accuracy, Figure 29 highlights the system up time in the output of top. <code>read_proc()</code>&#x2018;s page parameter is a page-sized buffer, typically to be filled up with count bytes from offset off. But more often than not (because of small content), just page is filled up, ignoring all other parameters. Since kernel v3.10, the read logic has to be implemented through something called a sequence file, which is implemented by specifying the pre-defined <code>seq_read()</code> function for the file operation read, and then by providing the above logic in the sequence file&#x2019;s read function through the file operation open using <code>single_open()</code>.</p>
+<p><img src="../Images/Part16/figure_29_top_output-1024x549.png" alt="Figure 29"></p>
+<p>All the <code>/proc</code> related structure definitions and function declarations are available through <code>&lt;linux/proc_fs.h&gt;</code>. The sequence file related stuff (since kernel v3.10) are available through <code>&lt;linux/seq_file.h&gt;</code>. And the jiffies related function declarations and macro definitions are in <code>&lt;linux/jiffies.h&gt;</code>. On a special note, the actual jiffies are being calculated by subtracting <code>INITIAL_JIFFIES</code>, as on boot-up, <code>jiffies</code> is initialized to <code>INITIAL_JIFFIES</code> instead of zero.</p>
+<h2 id="summing-up">Summing up</h2>
+<p>&#x201C;Hey Pugs!!! Why did you create the folder named as anil? Who is this Anil? You could have used my name or may be yours.&#x201D; suggested Shweta. &#x201C;Ha!! That&#x2019;s a surprise. My real name is Anil only. It is just that everyone in college knows me only as Pugs&#x201D;, smiled Pugs. Watch out for further technical romancing of Pugs aka Anil.</p>
+<h2 id="notes">Notes</h2>
+<p>One of the powerful usage of creating our own <code>proc</code> window is for customized debugging by querying. A simple but cool modification of the above driver, could be instead of getting the <code>jiffies</code>, it could read / write hardware registers.</p>
+
                     
                     </section>
                 
