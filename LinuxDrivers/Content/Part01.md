@@ -1,8 +1,8 @@
-# Linux Device Drivers for your Girl Friend
+# Linux Device Drivers for your Friend
 
 > This is the first article of the series on Linux device drivers, which aims to present the usually technical topic in a way that is more interesting to a wider cross-section of readers.
 
-“After a week of hard work, we finally got our driver working”, was the first line as Pugs met his girl friend Shweta.
+“After a week of hard work, we finally got our driver working”, was the first line as Pugs met his friend Shweta.
 
 “Why? What was your driver upto? Was he sick? And what hard work did you do?”, came a series of question from Shweta with a naughty smile.
 

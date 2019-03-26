@@ -1,7 +1,7 @@
 # Summary
 
 * [Preface](README.md)
-* [Linux Device Drivers for Your Girl Friend](Content/Part01.md)
+* [Linux Device Drivers for Your Friend](Content/Part01.md)
 * [Writing Your First Linux Driver in the Classroom](Content/Part02.md)
 * [Kernel C Extras in a Linux Driver](Content/Part03.md)
 * [Linux Character Drivers](Content/Part04.md)
